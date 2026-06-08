@@ -68,33 +68,51 @@ apps.
 
 ## Status
 
-**M1 (prove the loop) is implemented and verified** — build → explore → comment →
-spec-extract → edit → re-verify, end-to-end. By default it runs on a deterministic
-**stub** provider (no API key, no token spend); set `ANTHROPIC_API_KEY` to switch to
-real codegen — the provider is swappable behind one interface (SPEC §15).
+**M1 (prove the loop) and M3–M4 (the mission engine) are implemented and verified.**
+End-to-end, no API key required: prompt → build → derive 8–15 missions → walk each
+(Playwright, real Chromium) → a sorted **verdict list** (failed > ambiguous > passed)
+with per-step screenshot/DOM/video → click a step to leave a grounded comment → edit
+→ rebuild → re-verify. It runs on a deterministic **stub** provider by default (no
+token spend); set `ANTHROPIC_API_KEY` for real codegen — the provider is swappable
+behind one interface (SPEC §15).
 
 - **[SPEC.md](./SPEC.md)** — what SelfQA is and why it's shaped the way it is.
 - **[PLAN.md](./PLAN.md)** — the 8-week, 8-milestone build path.
 
-### Running locally (M1)
+### Running locally
+
+Generated apps (and SelfQA's own UI) run in **production mode** (`next build` +
+`next start`) — Next 16 dev does not reliably hydrate in this setup, so production is
+also what keeps the walk deterministic (no HMR races).
 
 ```bash
 npm install
+npx playwright install chromium          # one-time, ~150MB (for the mission walk)
 # optional — real codegen instead of the deterministic stub:
 cp .env.example .env && echo "ANTHROPIC_API_KEY=sk-..." >> .env
 
 # two processes (SPEC §14.1):
-npm run worker     # long-running worker: codegen + generated-app subprocesses
-npm run dev        # the SelfQA review UI
+npm run worker                            # long-running worker: codegen + walks
+npm run build && npm run start            # the SelfQA review UI (production)
 
-# open http://localhost:3000 — type a prompt, Build, then toggle Comment mode,
-# click an element, and submit a comment to drive an edit.
+# open http://localhost:3000 — type a prompt, Build, then Run missions to get the
+# verdict list; click a mission, click a step, and comment to drive an edit.
 ```
 
-Verify the loop without a browser (deterministic, no API key):
+Verify each layer without a browser-driver of your own (deterministic, no API key):
 
 ```bash
-npx tsx scripts/verify-loop.ts   # build → comment → edit → reflected in <60s
+npx tsx scripts/verify-schema.ts          # the shared assertion/mission schema
+npx tsx scripts/verify-checker.ts         # the one verification checker
+npx tsx scripts/verify-mission-deriver.ts # 8–15 typed missions, cold + informed
+npx tsx scripts/verify-fixtures.ts        # the fixtures contract
+npx tsx scripts/verify-first-walk.ts      # conservative first-walk verdicts
+npx tsx scripts/verify-loop.ts            # build → comment → edit → rebuilt → verified
+npx tsx scripts/verify-isolation-gate.ts  # parallel pool + per-mission isolation (Chromium)
+npx tsx scripts/verify-harness.ts         # selector ladder + settling + retry (Chromium)
+npx tsx scripts/verify-walk.ts            # mission walk + capture (Chromium)
+npx tsx scripts/verify-endpoints.ts       # worker build → walk → artifact → comment
+npx tsx scripts/verify-ui.ts              # the review UI, real browser end-to-end
 ```
 
 ## Stack
