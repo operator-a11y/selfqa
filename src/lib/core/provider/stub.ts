@@ -241,13 +241,42 @@ export class StubProvider implements LLMProvider {
     }
 
     if (role === "edit-agent") {
-      // Deterministic, visible change: flip the todo title text.
+      // Tuple mode (M5-D): the prompt carries machine-readable assertions, so the
+      // edit is a FUNCTION of the assertion (real consumption, not a fixed flip):
+      // write each assertion's `expected` into the element bearing its testid.
+      const asserts = [
+        ...userText.matchAll(
+          /SELFQA-ASSERT selector=(\S+) kind=(\S+) expected=("(?:[^"\\]|\\.)*")\nSELFQA-ASSERT-END/g,
+        ),
+      ];
+      if (asserts.length > 0) {
+        const pageMatch = userText.match(
+          /--- src\/app\/page\.tsx ---\n([\s\S]*?)(?:\n--- [^\n]+ ---\n|\nSELFQA-FILES-END)/,
+        );
+        let page =
+          pageMatch?.[1] ??
+          CANNED_TODO_APP.find((f) => f.path === "src/app/page.tsx")?.content ??
+          "";
+        for (const m of asserts) {
+          const tid = (m[1].match(/data-testid=([^\]]+)/) ?? [])[1];
+          if (!tid) continue;
+          const expected = JSON.parse(m[3]) as string;
+          const esc = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const re = new RegExp(
+            '(data-testid="' + esc + '"[^>]*>)([\\s\\S]*?)(</)',
+          );
+          page = page.replace(re, `$1\n        ${expected}\n      $3`);
+        }
+        return {
+          text: serializeFileBlocks([{ path: "src/app/page.tsx", content: page }]),
+          stopReason: "end_turn",
+        };
+      }
+
+      // Legacy fallback (no parsable assertion): unconditional title flip.
       const page = CANNED_TODO_APP.find((f) => f.path === "src/app/page.tsx");
       const edited = page
-        ? page.content.replace(
-            "        Todo\n",
-            "        Todo (edited by SelfQA)\n",
-          )
+        ? page.content.replace("        Todo\n", "        Todo (edited by SelfQA)\n")
         : "";
       return {
         text: serializeFileBlocks(

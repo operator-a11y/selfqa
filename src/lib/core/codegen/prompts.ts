@@ -5,7 +5,7 @@
  * misroute. Pure strings (+ type-only imports) — safe to import anywhere.
  */
 import type { GeneratedFile } from "./protocol";
-import type { Mission } from "../domain/types";
+import type { Mission, GroundedFeedback } from "../domain/types";
 
 export const BUILD_SYSTEM_PROMPT = `selfqa-role: build-agent
 You are SelfQA's build-agent.
@@ -39,7 +39,10 @@ You make a SMALL, localized edit to an existing app to address one or more
 grounded comments. You are a stateful editor of a persistent repo (SPEC §8.2):
 change as few files as possible; do NOT regenerate the app. Keep test-ids and
 seed-entity identities stable (SPEC §9.4). Output ONLY the changed files as
-<selfqa:file> blocks (full file contents for each changed file).`;
+<selfqa:file> blocks (full file contents for each changed file).
+
+When given grounded feedback, each comment carries the typed assertion that will
+be MECHANICALLY re-checked after your edit — make the change that flips it.`;
 
 export function editUserPrompt(args: {
   comment: string;
@@ -174,5 +177,78 @@ export function missionCompilerUserPrompt(
     fileList,
     ``,
     `Return ONLY {"actions":[...]}.`,
+  ].join("\n");
+}
+
+/** A small anchored DOM excerpt around the assertion's selector (not the whole page). */
+function domExcerpt(html: string, selector?: string): string {
+  if (selector) {
+    const tid = (selector.match(/data-testid=([^\]]+)/) ?? [])[1];
+    if (tid) {
+      const idx = html.indexOf(`data-testid="${tid}"`);
+      if (idx >= 0) {
+        return html
+          .slice(Math.max(0, idx - 80), idx + 160)
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+    }
+  }
+  return html.slice(0, 200).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Render the full grounded-feedback tuple for the edit-agent (M5-D): per comment,
+ * the NL + the MACHINE-READABLE assertion (SELFQA-ASSERT …) + the reproduction
+ * steps + the captured DOM excerpt — so codegen can CONSUME the assertion, and the
+ * stub can make its edit a function of it (not an unconditional flip).
+ */
+export function editFromTuplesUserPrompt(args: {
+  feedback: GroundedFeedback[];
+  currentFiles: { path: string; content: string }[];
+}): string {
+  const blocks = args.feedback
+    .map((f, i) => {
+      const a = f.assertion;
+      const assertLine =
+        a.type === "deterministic"
+          ? `SELFQA-ASSERT selector=${a.predicate.selector ?? ""} kind=${a.predicate.kind} expected=${JSON.stringify(String(a.predicate.expected ?? ""))}\nSELFQA-ASSERT-END`
+          : `SELFQA-ASSERT semantic nl=${JSON.stringify(a.nl)}\nSELFQA-ASSERT-END`;
+      const steps = f.actionSequencePrefix.length
+        ? f.actionSequencePrefix
+            .map(
+              (s, j) =>
+                `    ${j + 1}. ${s.kind}${s.target ? " @" + s.target.value : ""}${s.value !== undefined ? " = " + JSON.stringify(s.value) : ""}`,
+            )
+            .join("\n")
+        : "    (none)";
+      const excerpt = domExcerpt(
+        f.snapshot.domHtml,
+        a.type === "deterministic" ? a.predicate.selector : undefined,
+      );
+      return [
+        `Comment ${i + 1} — mission ${f.missionId}${typeof f.stepIndex === "number" ? ` step ${f.stepIndex}` : ""} (${f.commentType}):`,
+        `  NL: ${f.nl}`,
+        `  Assertion (will be MECHANICALLY re-checked after your edit):`,
+        `  ${assertLine}`,
+        `  Reproduction steps:`,
+        steps,
+        `  Captured DOM excerpt at the comment: ${excerpt}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  const files = args.currentFiles
+    .map((f) => `--- ${f.path} ---\n${f.content}`)
+    .join("\n\n");
+
+  return [
+    blocks,
+    "",
+    "Current files:",
+    files,
+    "SELFQA-FILES-END",
+    "",
+    "Return only the changed <selfqa:file> blocks.",
   ].join("\n");
 }

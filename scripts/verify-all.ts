@@ -18,6 +18,7 @@ const FAST = [
   "verify-build-agent",
   "verify-tuple-anchor",
   "verify-tuple-assemble",
+  "verify-edit-consume",
 ];
 const HEAVY = [
   "verify-action-capture",
