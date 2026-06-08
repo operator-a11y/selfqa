@@ -18,6 +18,7 @@ const FAST = [
   "verify-build-agent",
 ];
 const HEAVY = [
+  "verify-action-capture",
   "verify-runner",
   "verify-instrument",
   "verify-loop",

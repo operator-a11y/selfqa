@@ -39,6 +39,21 @@ export interface CheckResult {
 }
 
 /**
+ * A SERIALIZABLE snapshot of an ObservedState. ObservedState.q() is a live
+ * closure (over a Playwright page or a captured DOM) and cannot be persisted, so
+ * we store the plain data it was built from. `rebuildObservedState` (observe-serde)
+ * turns this back into a synchronous ObservedState the checker re-runs against —
+ * the bridge that lets re-walk compare before/after through the ONE checker.
+ */
+export interface SerializedObservedState {
+  url: string;
+  httpStatus?: number;
+  consoleErrors: string[];
+  formValidationBlocked?: boolean;
+  resolved: Record<string, ResolvedElement | null>;
+}
+
+/**
  * SPEC §7.2 — the FIXED first-walk whitelist. A strict subset of
  * DeterministicPredicateKind that DELIBERATELY EXCLUDES `text-equals`.
  * Do NOT widen this to "all deterministic kinds": that would let the agent
@@ -94,11 +109,21 @@ export function checkAssertion(a: Assertion, s: ObservedState): CheckResult {
         detail: `httpStatus=${s.httpStatus} expected=${p.expected}`,
       };
     }
-    case "url-equals":
+    case "url-equals": {
+      // expected is a route path (e.g. "/"); the host:port varies per run, so
+      // compare the pathname (and accept a full-url match for back-compat).
+      let pathname = s.url;
+      try {
+        pathname = new URL(s.url).pathname;
+      } catch {
+        /* not a full URL — compare raw */
+      }
+      const expected = String(p.expected);
       return {
-        satisfied: s.url === String(p.expected),
-        detail: `url=${s.url} expected=${p.expected}`,
+        satisfied: pathname === expected || s.url === expected,
+        detail: `path=${pathname} url=${s.url} expected=${expected}`,
       };
+    }
     case "console-error-absent":
       return {
         satisfied: s.consoleErrors.length === 0,

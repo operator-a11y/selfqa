@@ -77,7 +77,14 @@ export async function walkMission(
 
       const steps: StepCapture[] = [];
       const cap0 = await captureStep(page, runId, mission.id, 0);
-      steps.push({ index: 0, actionKind: "navigate", url: cap0.url, screenshot: cap0.screenshot, dom: cap0.dom });
+      steps.push({
+        index: 0,
+        actionKind: "navigate",
+        action: { kind: "navigate", value: baseUrl },
+        url: cap0.url,
+        screenshot: cap0.screenshot,
+        dom: cap0.dom,
+      });
 
       for (let i = 0; i < actions.length; i++) {
         await executeAction(page, actions[i]);
@@ -85,6 +92,7 @@ export async function walkMission(
         steps.push({
           index: i + 1,
           actionKind: actions[i].kind,
+          action: actions[i],
           url: cap.url,
           screenshot: cap.screenshot,
           dom: cap.dom,
@@ -106,6 +114,7 @@ export async function walkMission(
         reached: true,
         attempts: attempt,
         entryRoute,
+        actions,
         steps,
         video,
         terminalUrl: observed.url,
@@ -123,6 +132,7 @@ export async function walkMission(
         reached: false,
         attempts: attempt,
         entryRoute,
+        actions,
         steps: [],
         video,
         terminalUrl: baseUrl,

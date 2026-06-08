@@ -9,6 +9,8 @@
  * See SPEC.md for the authoritative definitions; section references are inline.
  */
 
+import type { SerializedObservedState, CheckResult } from "../verify/checker";
+
 /** SPEC §6.1 — the single typed-assertion spine. */
 export type AssertionType = "deterministic" | "semantic";
 
@@ -144,6 +146,8 @@ export interface CaptureRef {
 export interface StepCapture {
   index: number;
   actionKind: ActionKind;
+  /** the action that produced this step — the action-sequence leg of the tuple (M5-A) */
+  action?: Action;
   url: string;
   screenshot: string; // artifact path
   dom: string; // artifact path (serialized HTML)
@@ -159,6 +163,8 @@ export interface MissionTrace {
   reached: boolean; // did replay reach the terminal state?
   attempts: number;
   entryRoute: string;
+  /** the compiled action sequence for this mission (build-specific cache, SPEC §7.4) */
+  actions?: Action[];
   steps: StepCapture[];
   video?: string; // artifact path
   terminalUrl: string;
@@ -175,6 +181,9 @@ export interface MissionRun {
   mission: Mission;
   verdict: Verdict;
   trace: MissionTrace;
+  /** serializable pre-edit baseline for REACHED missions (M5-A; the flip's "before") */
+  beforeState?: SerializedObservedState;
+  criteriaResults?: { criterionIndex: number; check: CheckResult }[];
   regressionPromoted?: boolean;
   retirementProposed?: { reason: string };
 }
