@@ -2,6 +2,9 @@
   "name": "selfqa",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "dev": "next dev",
     "worker": "tsx watch worker/index.ts",
@@ -9,7 +12,24 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:all": "tsx scripts/verify-all.ts",
+    "verify:fast": "tsx scripts/verify-all.ts --fast",
+    "verify:schema": "tsx scripts/verify-schema.ts",
+    "verify:checker": "tsx scripts/verify-checker.ts",
+    "verify:mission-deriver": "tsx scripts/verify-mission-deriver.ts",
+    "verify:first-walk": "tsx scripts/verify-first-walk.ts",
+    "verify:fixtures": "tsx scripts/verify-fixtures.ts",
+    "verify:hot-path": "tsx scripts/verify-hot-path.ts",
+    "verify:build-agent": "tsx scripts/verify-build-agent.ts",
+    "verify:runner": "tsx scripts/verify-runner.ts",
+    "verify:instrument": "tsx scripts/verify-instrument.ts",
+    "verify:loop": "tsx scripts/verify-loop.ts",
+    "verify:isolation-gate": "tsx scripts/verify-isolation-gate.ts",
+    "verify:harness": "tsx scripts/verify-harness.ts",
+    "verify:walk": "tsx scripts/verify-walk.ts",
+    "verify:endpoints": "tsx scripts/verify-endpoints.ts",
+    "verify:ui": "tsx scripts/verify-ui.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
