@@ -7,8 +7,8 @@
   },
   "scripts": {
     "dev": "next dev",
-    "worker": "tsx watch worker/index.ts",
-    "worker:start": "tsx worker/index.ts",
+    "worker": "tsx watch --env-file-if-exists=.env worker/index.ts",
+    "worker:start": "tsx --env-file-if-exists=.env worker/index.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
