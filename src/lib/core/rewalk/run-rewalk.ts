@@ -16,9 +16,10 @@
 import type { Browser } from "playwright";
 import { promises as fs } from "node:fs";
 import type { LLMProvider } from "../provider/types";
-import type { GroundedFeedback, ReWalkOutcome, ReWalkRecord } from "../domain/types";
+import type { GroundedFeedback, MissionRun, ReWalkOutcome, ReWalkRecord } from "../domain/types";
 import type { IsolationProvider } from "../walk/isolation";
 import { walkAll, type MissionPlan } from "../walk/walker";
+import { missionRunFromWalked } from "../run";
 import { reconstructObservedFromDom } from "./observed-before";
 import { evaluateFlip, type FlipResult } from "../verify/flip";
 import { assignReWalkVerdict } from "../verify/rewalk-verdict";
@@ -38,6 +39,11 @@ export async function reWalk(args: {
   // Hot-path: replay the affected missions (parallel, isolated, zero LLM).
   const walked = await walkAll(args.browser, args.iso, args.baseUrl, args.runId, args.plans, 4);
   const byMission = new Map(walked.map((w) => [w.trace.missionId, w]));
+
+  // Updated per-mission verdicts from the re-walk (off the loop; pure helper).
+  const updatedMissions: MissionRun[] = walked.map((w, i) =>
+    missionRunFromWalked(args.plans[i].mission, w, args.buildSha),
+  );
 
   const terminalDom = new Map<string, string>();
   for (const w of walked) {
@@ -107,5 +113,5 @@ export async function reWalk(args: {
   const recompileRate = total
     ? Object.values(args.recompiled).filter(Boolean).length / total
     : 0;
-  return { outcomes, recompileRate };
+  return { outcomes, recompileRate, missions: updatedMissions };
 }

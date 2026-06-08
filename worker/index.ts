@@ -20,11 +20,12 @@ import { promises as fs } from "node:fs";
 import { getProvider } from "../src/lib/core/provider/factory";
 import { buildApp, type GeneratedApp } from "../src/lib/core/codegen/build-agent";
 import { instrument } from "../src/lib/core/instrument/inject";
-import { extractSpec } from "../src/lib/core/codegen/spec-extractor";
-import { editApp } from "../src/lib/core/codegen/edit-agent";
+import { assembleTuple } from "../src/lib/core/codegen/tuple";
+import { editFromTuples } from "../src/lib/core/codegen/edit-agent";
 import {
   writeGeneratedApp,
   currentSha,
+  diffFiles,
   type AppRepo,
 } from "../src/lib/core/workspace/repo";
 import {
@@ -33,12 +34,15 @@ import {
   stopAll,
   type RunningApp,
 } from "../src/lib/core/runner/app-runner";
-import { runMissions } from "../src/lib/core/run";
+import { runMissions, rankVerdict } from "../src/lib/core/run";
 import { getBrowser, closeBrowser } from "../src/lib/core/harness/browser";
 import { ClientContextIsolation } from "../src/lib/core/walk/isolation";
-import { resolveTraceCoordinate } from "../src/lib/core/walk/comment-anchor";
 import { isUnderArtifactsRoot } from "../src/lib/core/walk/capture";
-import type { RunRecord } from "../src/lib/core/domain/types";
+import { classifyDiff, selectRewalkSet } from "../src/lib/core/verify/manifest";
+import { planReWalk } from "../src/lib/core/rewalk/plan";
+import { reWalk } from "../src/lib/core/rewalk/run-rewalk";
+import { computeRunDiff } from "../src/lib/core/regression/diff";
+import type { CommentType, RunRecord } from "../src/lib/core/domain/types";
 
 const PORT = Number(process.env.SELFQA_WORKER_PORT ?? 4317);
 const provider = getProvider();
@@ -163,38 +167,87 @@ const server = http.createServer(async (req, res) => {
       const appId = String(body.appId ?? "");
       const built = apps.get(appId);
       if (!built) return sendJson(res, 404, { error: "unknown appId" });
+      const run = runs.get(appId);
+      if (!run) return sendJson(res, 400, { error: "run /api/walk before commenting" });
+      const missionId = String(body.missionId ?? "");
+      const mr = run.missions.find((m) => m.mission.id === missionId);
+      if (!mr) return sendJson(res, 404, { error: "unknown mission in run" });
       const nl = String(body.nl ?? "");
+      const stepIndex = typeof body.stepIndex === "number" ? body.stepIndex : undefined;
+      const commentType = (body.commentType as CommentType) ?? "step-anchored";
 
-      // Trace-anchored (P2) when missionId is present: read {url, domPath} OFF the
-      // stored trace at the coordinate. Otherwise fall back to a direct anchor.
-      let target: { url: string; domPath: string };
-      if (body.missionId) {
-        const run = runs.get(appId);
-        const mr = run?.missions.find((m) => m.mission.id === String(body.missionId));
-        if (!mr) return sendJson(res, 404, { error: "unknown mission in run" });
-        const stepIndex =
-          typeof body.stepIndex === "number" ? body.stepIndex : undefined;
-        target = resolveTraceCoordinate(mr.trace, stepIndex);
-      } else {
-        target = {
-          url: String(body.url ?? built.running.url),
-          domPath: String(body.domPath ?? ""),
-        };
-      }
+      // 1. compile the comment to the full grounded tuple (off the trace, never inferred)
+      const tuple = await assembleTuple(provider, { trace: mr.trace, stepIndex, nl, commentType });
+      if (!tuple.ok) return sendJson(res, 200, { route: "needs-human", reason: tuple.reason });
 
-      const spec = await extractSpec(provider, { comment: nl, ...target });
-      const edit = await editApp(provider, { dir: built.repo.dir, comment: nl, ...target });
+      // 2. codegen CONSUMES the tuple -> edit -> commit -> rebuild
+      const shaBefore = await currentSha(built.repo.dir);
+      await editFromTuples(provider, { dir: built.repo.dir, feedback: [tuple.feedback] });
       const rebuilt = await rebuildApp(built.running);
       built.running = rebuilt;
-      console.log(`[worker] comment on ${appId} -> edit ${edit.sha}, rebuilt at ${rebuilt.url}`);
-      return sendJson(res, 200, {
-        sha: edit.sha,
-        changed: edit.changed,
-        url: rebuilt.url,
-        assertion: spec.assertion,
-        clarifyingQuestion: spec.clarifyingQuestion,
-        note: "M5: typed assertion persisted but not yet consumed by codegen / re-asserted on re-walk (SPEC §10.5)",
+      const shaAfter = await currentSha(built.repo.dir);
+
+      // 3. mechanical re-walk scope from the git diff (never editApp.changed, P1)
+      const changed = await diffFiles(built.repo.dir, shaBefore, shaAfter);
+      const cls = classifyDiff(changed);
+      const priorTraces = new Map(run.missions.map((m) => [m.mission.id, m.trace]));
+      const missionObjs = run.missions.map((m) => m.mission);
+      const affectedIds = selectRewalkSet(missionObjs, priorTraces, cls, []);
+      const affected = missionObjs.filter((m) => affectedIds.includes(m.id));
+      const plan = await planReWalk(provider, { app: built.app, missions: affected, priorTraces, cls });
+
+      // 4. re-walk REPLAYS + RE-ASSERTS the comment's assertion (the flip)
+      const browser = await getBrowser();
+      const record = await reWalk({ provider, browser, iso, baseUrl: rebuilt.url, runId: newId("rewalk"), buildSha: shaAfter, feedback: [tuple.feedback], plans: plan.plans, recompiled: plan.recompiled });
+
+      // 5. merge updated verdicts (preserving promotion flags); compute the diff
+      const updatedById = new Map((record.missions ?? []).map((m) => [m.mission.id, m]));
+      const prior = run.missions;
+      const next = run.missions.map((m) => {
+        const u = updatedById.get(m.mission.id);
+        return u ? { ...u, regressionPromoted: m.regressionPromoted, retirementProposed: m.retirementProposed } : m;
       });
+      next.sort((a, b) => rankVerdict(a.verdict.status) - rankVerdict(b.verdict.status));
+      runs.set(appId, { appId, buildSha: shaAfter, missions: next });
+      const diff = computeRunDiff(prior, next);
+      const flip = record.outcomes[0];
+      console.log(`[worker] comment ${appId}/${missionId} -> ${flip?.assertionResult} (sha ${shaAfter.slice(0, 10)})`);
+      return sendJson(res, 200, {
+        ok: true,
+        sha: shaAfter,
+        url: rebuilt.url,
+        changed,
+        recompileRate: record.recompileRate,
+        flip,
+        diff,
+        commentAssertion: tuple.feedback.assertion,
+      });
+    }
+
+    if (req.method === "POST" && pathname === "/api/promote") {
+      const body = await readJson(req);
+      const run = runs.get(String(body.appId ?? ""));
+      const mr = run?.missions.find((m) => m.mission.id === String(body.missionId ?? ""));
+      if (!run || !mr) return sendJson(res, 404, { error: "unknown mission/run" });
+      // Human approval mints a permanent regression test (§7.5).
+      mr.regressionPromoted = true;
+      mr.retirementProposed = undefined;
+      return sendJson(res, 200, { ok: true, missionId: mr.mission.id, regressionPromoted: true });
+    }
+
+    if (req.method === "POST" && pathname === "/api/retire") {
+      const body = await readJson(req);
+      const run = runs.get(String(body.appId ?? ""));
+      const mr = run?.missions.find((m) => m.mission.id === String(body.missionId ?? ""));
+      if (!run || !mr) return sendJson(res, 404, { error: "unknown mission/run" });
+      if (body.approve === true) {
+        // human-approved retirement only — never an auto-drop (P1).
+        mr.regressionPromoted = false;
+        mr.retirementProposed = undefined;
+        return sendJson(res, 200, { ok: true, retired: true });
+      }
+      mr.retirementProposed = { reason: String(body.reason ?? "proposed") };
+      return sendJson(res, 200, { ok: true, retirementProposed: mr.retirementProposed });
     }
 
     sendJson(res, 404, { error: "not found" });

@@ -98,19 +98,37 @@ async function main(): Promise<void> {
     const esc = await fetch(base + `/api/artifact?path=${encodeURIComponent("/etc/passwd")}`);
     truthy("/api/artifact rejects an escaping path (403)", esc.status === 403);
 
+    interface MR { mission: { id: string }; trace: { steps: unknown[] }; verdict: { status: string } }
+    const missionsArr = run.missions as MR[];
+    const target = missionsArr.find((m) => m.mission.id === "mission-add-todo") ?? missionsArr[0];
+    const stepIndex = target.trace.steps.length - 1;
     const cmt = await (
       await fetch(base + "/api/comment", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           appId: build.appId,
-          missionId: run.missions[0].mission.id,
-          stepIndex: 0,
+          missionId: target.mission.id,
+          stepIndex,
           nl: "the title should indicate it was edited",
+          commentType: "step-anchored",
         }),
       })
     ).json();
-    truthy("/api/comment (trace-anchored) returns sha + url + assertion", !!cmt.sha && !!cmt.url && !!cmt.assertion);
+    truthy("/api/comment returns ok + a flip outcome", cmt.ok === true && !!cmt.flip);
+    truthy(
+      "/api/comment: the comment's assertion FLIPS fail->pass through the worker",
+      cmt.flip?.assertionResult === "flipped" && cmt.flip?.verdict?.status === "pass",
+    );
+
+    const prom = await (
+      await fetch(base + "/api/promote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ appId: build.appId, missionId: target.mission.id }),
+      })
+    ).json();
+    truthy("/api/promote mints a regression test", prom.ok === true && prom.regressionPromoted === true);
   } finally {
     if (worker.pid) {
       try {

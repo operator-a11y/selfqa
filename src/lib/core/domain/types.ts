@@ -247,4 +247,5 @@ export interface ReWalkOutcome {
 export interface ReWalkRecord {
   outcomes: ReWalkOutcome[];
   recompileRate: number; // fraction of re-walked missions whose sequence was recompiled
+  missions?: MissionRun[]; // updated per-mission verdicts for the re-walked missions
 }
