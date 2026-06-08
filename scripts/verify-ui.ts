@@ -90,6 +90,14 @@ async function main(): Promise<void> {
     const promoteText = (await page.getByTestId("promote-mission").textContent()) ?? "";
     truthy("promote marks the mission a regression test", promoteText.includes("✓"));
 
+    // M6-B: the Metrics tab renders the four metrics from the comment we just made.
+    await page.getByTestId("tab-metrics").click();
+    truthy("metrics panel renders", await ok(page.getByTestId("metrics-panel").waitFor({ timeout: 10000 })));
+    truthy("det:semantic metric card shows", await ok(page.getByTestId("metric-det-semantic").waitFor({ timeout: 10000 })));
+    const dsText = (await page.getByTestId("metric-det-semantic").textContent()) ?? "";
+    truthy("det:semantic card reports a deterministic % (" + dsText.replace(/\s+/g, " ").trim().slice(0, 40) + ")", /deterministic/.test(dsText) && /%/.test(dsText));
+    truthy("attempts histogram card shows", await ok(page.getByTestId("metric-attempts").waitFor({ timeout: 10000 })));
+
     await closeBrowser();
   } finally {
     for (const p of [worker, selfqa]) {

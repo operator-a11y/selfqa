@@ -45,6 +45,13 @@ import { planReWalk } from "../src/lib/core/rewalk/plan";
 import { reWalk } from "../src/lib/core/rewalk/run-rewalk";
 import { computeRunDiff } from "../src/lib/core/regression/diff";
 import { makeMetadataStore } from "../src/lib/core/persist/factory";
+import {
+  commentAssertionCompiled,
+  rewalkMissionReplay,
+  rewalkBucketDecided,
+  commentLoopTerminated,
+} from "../src/lib/core/metrics/events";
+import { aggregateMetrics } from "../src/lib/core/metrics/aggregate";
 import type { CommentType, RunRecord } from "../src/lib/core/domain/types";
 
 const PORT = Number(process.env.SELFQA_WORKER_PORT ?? 4317);
@@ -157,6 +164,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, run);
     }
 
+    if (req.method === "GET" && pathname === "/api/metrics") {
+      const appId = url.searchParams.get("appId") ?? "";
+      // Derived dashboard (M6-B, SPEC §12): aggregate the durable metric_event log.
+      return sendJson(res, 200, aggregateMetrics(store.listMetrics(appId)));
+    }
+
     if (req.method === "GET" && pathname === "/api/artifact") {
       const p = url.searchParams.get("path") ?? "";
       if (!p) return sendJson(res, 400, { error: "path required" });
@@ -225,6 +238,18 @@ const server = http.createServer(async (req, res) => {
       store.saveRun(nextRun, shaBefore); // new build's verdicts are durable; parent = pre-edit sha
       const diff = computeRunDiff(prior, next);
       const flip = record.outcomes[0];
+
+      // metrics (M6-B) — emitted once, off the hot path, from GENUINE decisions:
+      // the compiled assertion's type, the planner's per-mission recompile flag,
+      // the manifest bucket, and the loop's attempts-to-termination (single-shot
+      // here = 1 attempt; the cap-3 path lives in rewalk/loop.ts converge()).
+      store.recordMetric(commentAssertionCompiled(appId, tuple.feedback.assertion, shaAfter));
+      for (const [mid, recompiled] of Object.entries(plan.recompiled)) {
+        store.recordMetric(rewalkMissionReplay(appId, mid, recompiled, shaAfter));
+      }
+      store.recordMetric(rewalkBucketDecided(appId, cls.bucket, shaAfter));
+      store.recordMetric(commentLoopTerminated(appId, 1, !!flip?.resolved, shaAfter));
+
       console.log(`[worker] comment ${appId}/${missionId} -> ${flip?.assertionResult} (sha ${shaAfter.slice(0, 10)})`);
       return sendJson(res, 200, {
         ok: true,

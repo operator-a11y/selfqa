@@ -129,6 +129,17 @@ async function main(): Promise<void> {
       })
     ).json();
     truthy("/api/promote mints a regression test", prom.ok === true && prom.regressionPromoted === true);
+
+    // M6-B: the comment above emitted the four metric events; the dashboard aggregates them.
+    const metrics = await (await fetch(base + `/api/metrics?appId=${build.appId}`)).json();
+    truthy(
+      "/api/metrics aggregates the comment's deterministic assertion (≥1 det, meets target)",
+      metrics.detSemantic?.deterministic >= 1 && metrics.detSemantic?.meetsTarget === true,
+    );
+    truthy(
+      "/api/metrics reports a bucket decision + a terminated loop attempt",
+      (metrics.bucket?.everything + metrics.bucket?.local) >= 1 && metrics.attempts?.total >= 1,
+    );
   } finally {
     if (worker.pid) {
       try {

@@ -25,6 +25,7 @@ const FAST = [
   "verify-gate",
   "verify-converge",
   "verify-persist",
+  "verify-metrics",
 ];
 const HEAVY = [
   "verify-action-capture",

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { DET_SEMANTIC_TARGET } from "../lib/core/metrics/aggregate";
 
 interface BuildResult {
   appId: string;
@@ -54,6 +55,15 @@ interface CommentTarget {
   domPath: string;
   rect: { x: number; y: number; width: number; height: number };
 }
+interface MetricsT {
+  detSemantic: { deterministic: number; semantic: number; ratio: number; meetsTarget: boolean };
+  recompile: { recompiled: number; reused: number; rate: number };
+  bucket: { everything: number; local: number; everythingFraction: number };
+  attempts: { histogram: Record<number, number>; cap: number; total: number; resolved: number };
+  totalEvents: number;
+}
+
+const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 const artifactUrl = (p: string) => `/api/artifact?path=${encodeURIComponent(p)}`;
 
@@ -78,7 +88,8 @@ export default function Home() {
   const [app, setApp] = useState<BuildResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [tab, setTab] = useState<"review" | "explore">("review");
+  const [tab, setTab] = useState<"review" | "explore" | "metrics">("review");
+  const [metrics, setMetrics] = useState<MetricsT | null>(null);
 
   // review state
   const [walking, setWalking] = useState(false);
@@ -169,6 +180,17 @@ export default function Home() {
     }
   }
 
+  async function fetchMetrics() {
+    if (!app) return;
+    try {
+      const res = await fetch(`/api/metrics?appId=${encodeURIComponent(app.appId)}`);
+      const data = await res.json();
+      if (res.ok) setMetrics(data as MetricsT);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function promote(missionId: string) {
     if (!app) return;
     try {
@@ -226,6 +248,7 @@ export default function Home() {
       setCommentText("");
       if (iframeRef.current) iframeRef.current.src = `${newUrl}?t=${Date.now()}`;
       await refreshMissions();
+      void fetchMetrics();
     } catch (e) {
       setStatus(`Comment: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -264,6 +287,16 @@ export default function Home() {
               data-testid="tab-explore"
             >
               Explore
+            </button>
+            <button
+              onClick={() => {
+                setTab("metrics");
+                void fetchMetrics();
+              }}
+              className={`rounded px-3 py-1.5 ${tab === "metrics" ? "bg-black text-white" : "bg-gray-200"}`}
+              data-testid="tab-metrics"
+            >
+              Metrics
             </button>
           </div>
         )}
@@ -359,6 +392,78 @@ export default function Home() {
                 <iframe ref={iframeRef} src={app.url} className="min-h-0 flex-1 border-0 bg-white" data-testid="app-iframe" />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-gray-400">Build an app to explore it.</div>
+              )}
+            </div>
+          ) : tab === "metrics" ? (
+            <div className="h-full overflow-y-auto p-6" data-testid="metrics-panel">
+              {!metrics || metrics.totalEvents === 0 ? (
+                <div className="text-sm text-gray-400">
+                  No metrics yet. Submit a grounded comment (Review tab) to generate the loop&apos;s metric events.
+                </div>
+              ) : (
+                <div className="grid max-w-3xl grid-cols-1 gap-4 md:grid-cols-2">
+                  {/* 1. det:semantic ratio — target ≥80% */}
+                  <div className="rounded border bg-white p-4" data-testid="metric-det-semantic">
+                    <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                      Assertion mix (deterministic : semantic)
+                    </div>
+                    <div className={`mt-1 text-2xl font-semibold ${metrics.detSemantic.meetsTarget ? "text-green-700" : "text-amber-700"}`}>
+                      {pct(metrics.detSemantic.ratio)} deterministic
+                    </div>
+                    <div className="mt-1 text-xs text-gray-600">
+                      {metrics.detSemantic.deterministic} deterministic · {metrics.detSemantic.semantic} semantic ·
+                      target ≥ {pct(DET_SEMANTIC_TARGET)}{" "}
+                      <span className={metrics.detSemantic.meetsTarget ? "text-green-700" : "text-amber-700"}>
+                        ({metrics.detSemantic.meetsTarget ? "meets" : "below"} target)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 2. recompile rate */}
+                  <div className="rounded border bg-white p-4" data-testid="metric-recompile">
+                    <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                      Re-walk recompile rate
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold text-gray-800">{pct(metrics.recompile.rate)}</div>
+                    <div className="mt-1 text-xs text-gray-600">
+                      {metrics.recompile.recompiled} recompiled · {metrics.recompile.reused} replayed from cache (lower is cheaper)
+                    </div>
+                  </div>
+
+                  {/* 3. everything-bucket fraction */}
+                  <div className="rounded border bg-white p-4" data-testid="metric-bucket">
+                    <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                      &quot;Everything&quot; bucket fraction
+                    </div>
+                    <div className="mt-1 text-2xl font-semibold text-gray-800">{pct(metrics.bucket.everythingFraction)}</div>
+                    <div className="mt-1 text-xs text-gray-600">
+                      {metrics.bucket.everything} everything · {metrics.bucket.local} route-local (lower = tighter scoping)
+                    </div>
+                  </div>
+
+                  {/* 4. attempts-to-resolution histogram vs cap */}
+                  <div className="rounded border bg-white p-4" data-testid="metric-attempts">
+                    <div className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                      Comment attempts to resolution (cap {metrics.attempts.cap})
+                    </div>
+                    <div className="mt-2 flex flex-col gap-1">
+                      {Array.from({ length: metrics.attempts.cap }, (_, i) => i + 1).map((n) => {
+                        const count = metrics.attempts.histogram[n] ?? 0;
+                        const max = Math.max(1, ...Object.values(metrics.attempts.histogram));
+                        return (
+                          <div key={n} className="flex items-center gap-2 text-xs">
+                            <span className="w-14 text-gray-500">{n} attempt{n > 1 ? "s" : ""}</span>
+                            <span className="h-3 rounded bg-indigo-500" style={{ width: `${(count / max) * 100}%`, minWidth: count ? 8 : 0 }} />
+                            <span className="text-gray-700">{count}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-2 text-xs text-gray-600">
+                      {metrics.attempts.resolved}/{metrics.attempts.total} resolved within the cap
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           ) : (
