@@ -28,6 +28,7 @@ const FAST = [
   "verify-metrics",
   "verify-diff",
   "verify-regression",
+  "verify-db-isolation",
 ];
 const HEAVY = [
   "verify-action-capture",
@@ -41,6 +42,7 @@ const HEAVY = [
   "verify-endpoints",
   "verify-ui",
   "verify-loop-e2e",
+  "verify-db-e2e",
 ];
 
 const onlyFast =

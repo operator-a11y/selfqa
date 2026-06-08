@@ -53,9 +53,10 @@ export async function walkMission(
   runId: string,
   mission: Mission,
   actions: Action[],
-  opts: { retries?: number } = {},
+  opts: { retries?: number; slotId?: number } = {},
 ): Promise<WalkedMission> {
   const maxAttempts = (opts.retries ?? 1) + 1;
+  const slot = opts.slotId ?? 0;
   const entryRoute = entryRouteOf(actions);
   let last: MissionTrace | null = null;
 
@@ -65,7 +66,7 @@ export async function walkMission(
     const consoleErrors: string[] = [];
     let httpStatus: number | undefined;
     try {
-      await iso.before(ctx);
+      await iso.before(ctx, slot);
       const page = await ctx.newPage();
       page.on("console", (m) => {
         if (m.type() === "error") consoleErrors.push(m.text());
@@ -104,7 +105,7 @@ export async function walkMission(
         consoleErrors,
         selectors: criteriaSelectors(mission),
       });
-      await iso.after(ctx);
+      await iso.after(ctx, slot);
       const vid = page.video();
       await ctx.close();
       const video = vid ? await vid.path().catch(() => undefined) : undefined;
@@ -122,7 +123,8 @@ export async function walkMission(
         consoleErrors,
       };
       return { trace, observed };
-    } catch {
+    } catch (err) {
+      if (process.env.SELFQA_WALK_DEBUG) console.error(`[walk fail] ${mission.id} attempt ${attempt}:`, err instanceof Error ? err.message : err);
       const vid = ctx.pages()[0]?.video();
       await ctx.close().catch(() => {});
       const video = vid ? await vid.path().catch(() => undefined) : undefined;
@@ -148,12 +150,15 @@ export async function walkMission(
 export async function walkAll(
   browser: Browser,
   iso: IsolationProvider,
-  baseUrl: string,
+  /** a single shared server (kind 'none') OR one base url per lane (db-file-copy). */
+  baseUrl: string | string[],
   runId: string,
   plans: MissionPlan[],
   concurrency = 4,
 ): Promise<WalkedMission[]> {
-  return pool(plans, concurrency, (p) =>
-    walkMission(browser, iso, baseUrl, runId, p.mission, p.actions),
+  const urlForSlot = (slot: number): string =>
+    Array.isArray(baseUrl) ? baseUrl[slot] ?? baseUrl[0] : baseUrl;
+  return pool(plans, concurrency, (p, slot) =>
+    walkMission(browser, iso, urlForSlot(slot), runId, p.mission, p.actions, { slotId: slot }),
   );
 }

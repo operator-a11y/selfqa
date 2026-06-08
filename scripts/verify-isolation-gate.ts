@@ -46,9 +46,11 @@ async function main(): Promise<void> {
 
   // Two missions in parallel: #0 writes localStorage and re-reads its own;
   // #1 reads localStorage. Isolation => #0 sees "A", #1 sees null regardless of timing.
-  const results = await pool([0, 1], 2, async (i) => {
+  const slotsSeen: number[] = [];
+  const results = await pool([0, 1], 2, async (i, slot) => {
+    slotsSeen[i] = slot;
     const ctx = await browser.newContext();
-    await iso.before(ctx);
+    await iso.before(ctx, slot);
     const page = await ctx.newPage();
     await page.goto(running.url, { waitUntil: "domcontentloaded" });
     let value: string | null;
@@ -58,7 +60,7 @@ async function main(): Promise<void> {
     } else {
       value = await page.evaluate(() => localStorage.getItem("selfqa-iso"));
     }
-    await iso.after(ctx);
+    await iso.after(ctx, slot);
     await ctx.close();
     return { i, value };
   });
@@ -68,13 +70,19 @@ async function main(): Promise<void> {
   const m1 = results.find((r) => r.i === 1);
   truthy("mission #0 sees its own client write (value=A)", m0?.value === "A");
   truthy("mission #1 does NOT see #0's write (isolated, value=null)", m1?.value === null);
+  truthy("pool gives each lane a stable slot id in 0..N-1", slotsSeen.every((s) => s === 0 || s === 1));
 
-  const db = new DbRestoreIsolation();
+  // DbRestoreIsolation is REAL as of M5-F: before(ctx, slot) calls the injected
+  // restore-to-seed for THAT lane (the primitive itself is gated by verify-db-isolation).
+  const restored: number[] = [];
+  const db = new DbRestoreIsolation(async (slot) => {
+    restored.push(slot);
+  });
   const tmpCtx = await browser.newContext();
-  await db.before(tmpCtx);
-  await db.after(tmpCtx);
+  await db.before(tmpCtx, 3);
+  await db.after(tmpCtx, 3);
   await tmpCtx.close();
-  truthy("DbRestore is an intentional no-op in M3", db.kind === "db-restore-noop" && !!db.noopReason);
+  truthy("DbRestoreIsolation.before restores the named lane (real, not a no-op)", db.kind === "db-restore" && restored.length === 1 && restored[0] === 3);
 
   await running.stop();
   await closeBrowser();

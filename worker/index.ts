@@ -28,6 +28,7 @@ import {
   writeGeneratedApp,
   currentSha,
   diffFiles,
+  loadFixtures,
   type AppRepo,
 } from "../src/lib/core/workspace/repo";
 import {
@@ -140,7 +141,11 @@ const server = http.createServer(async (req, res) => {
       if (!built) return sendJson(res, 404, { error: "unknown appId" });
       const browser = await getBrowser();
       const buildSha = await currentSha(built.repo.dir);
-      console.log(`[worker] walk ${appId} (sha ${buildSha})`);
+      // SPEC §9.3: a db-file-copy app is forced to concurrency 1 until the
+      // verify-db-e2e gate flips parallelDbVerdictsTrusted (M5-F-INT safety rail).
+      const fixtures = await loadFixtures(built.repo.dir).catch(() => null);
+      const snapshotRestoreKind = fixtures?.snapshotRestore.kind ?? "none";
+      console.log(`[worker] walk ${appId} (sha ${buildSha}, isolation ${snapshotRestoreKind})`);
       const run = await runMissions({
         provider,
         browser,
@@ -150,6 +155,8 @@ const server = http.createServer(async (req, res) => {
         appId,
         app: built.app,
         buildSha,
+        snapshotRestoreKind,
+        parallelDbVerdictsTrusted: store.getParallelDbVerdictsTrusted(),
       });
       runs.set(appId, run);
       store.saveRun(run);

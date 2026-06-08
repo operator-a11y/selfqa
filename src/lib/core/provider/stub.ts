@@ -16,6 +16,7 @@ import type {
   LLMCompletionResult,
 } from "./types";
 import { serializeFileBlocks, type GeneratedFile } from "../codegen/protocol";
+import { DB_STUB_APP, isDbStubPrompt } from "../codegen/db-stub-app";
 import {
   STUB_COLD_MISSIONS,
   STUB_INFORMED_MISSIONS,
@@ -234,8 +235,11 @@ export class StubProvider implements LLMProvider {
     const userText = req.messages.map((m) => m.content).join("\n");
 
     if (role === "build-agent") {
+      // A SECOND canned app, gated behind a prompt marker so the default
+      // client-state todo path (and every other verify script) is unchanged.
+      const app = isDbStubPrompt(userText) ? DB_STUB_APP : CANNED_TODO_APP;
       return {
-        text: serializeFileBlocks(CANNED_TODO_APP),
+        text: serializeFileBlocks(app),
         stopReason: "end_turn",
       };
     }

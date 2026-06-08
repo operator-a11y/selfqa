@@ -21,6 +21,21 @@ export function rankVerdict(s: VerdictStatus): number {
   return s === "fail" ? 0 : s === "ambiguous" ? 1 : 2;
 }
 
+/**
+ * SPEC §9.3 hard precondition (M5-F-INT): until verify-db-e2e flips
+ * `parallelDbVerdictsTrusted`, a db-file-copy app is walked at concurrency 1
+ * (correct-but-slow) so no UNTRUSTED parallel DB verdict can ever be produced.
+ * Client-state apps (kind 'none') parallelize freely.
+ */
+export function effectiveConcurrency(
+  requested: number,
+  snapshotRestoreKind: "db-file-copy" | "none",
+  parallelDbVerdictsTrusted: boolean,
+): number {
+  if (snapshotRestoreKind === "db-file-copy" && !parallelDbVerdictsTrusted) return 1;
+  return requested;
+}
+
 /** Build a MissionRun (verdict + serializable before-state) from a walked mission. */
 export function missionRunFromWalked(
   mission: Mission,
@@ -59,6 +74,9 @@ export async function runMissions(args: {
   concurrency?: number;
   /** re-walk scope (SPEC §8.3); absent = walk all (M4 behavior unchanged) */
   missionIds?: string[];
+  /** SPEC §9.3: db-file-copy + untrusted -> forced to concurrency 1 (M5-F-INT) */
+  snapshotRestoreKind?: "db-file-copy" | "none";
+  parallelDbVerdictsTrusted?: boolean;
 }): Promise<RunRecord> {
   const { missions } = await deriveMissions(args.provider, {
     appPrompt: args.app.prompt,
@@ -77,13 +95,18 @@ export async function runMissions(args: {
     });
   }
 
+  const concurrency = effectiveConcurrency(
+    args.concurrency ?? 4,
+    args.snapshotRestoreKind ?? "none",
+    args.parallelDbVerdictsTrusted ?? false,
+  );
   const walked = await walkAll(
     args.browser,
     args.iso,
     args.baseUrl,
     args.runId,
     plans,
-    args.concurrency ?? 4,
+    concurrency,
   );
 
   const runs: MissionRun[] = walked.map((w, i) =>

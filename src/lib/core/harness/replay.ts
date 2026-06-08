@@ -24,21 +24,22 @@ export async function replaySequence(
   iso: IsolationProvider,
   url: string,
   actions: Action[],
-  opts: { retries?: number } = {},
+  opts: { retries?: number; slotId?: number } = {},
 ): Promise<ReplayResult> {
   const maxAttempts = (opts.retries ?? 1) + 1;
+  const slot = opts.slotId ?? 0;
   let lastErr: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const ctx = await browser.newContext();
     try {
-      await iso.before(ctx); // restore BEFORE replay (order matters)
+      await iso.before(ctx, slot); // restore lane `slot` BEFORE replay (order matters)
       const page = await ctx.newPage();
       await installSettle(page);
       await page.goto(url, { waitUntil: "load" });
       await waitForSettled(page);
       await executeSequence(page, actions);
-      await iso.after(ctx);
+      await iso.after(ctx, slot);
       await ctx.close();
       return { ok: true, attempts: attempt };
     } catch (e) {

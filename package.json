@@ -36,6 +36,7 @@
     "verify:metrics": "tsx scripts/verify-metrics.ts",
     "verify:diff": "tsx scripts/verify-diff.ts",
     "verify:regression": "tsx scripts/verify-regression.ts",
+    "verify:db-isolation": "tsx scripts/verify-db-isolation.ts",
     "verify:runner": "tsx scripts/verify-runner.ts",
     "verify:instrument": "tsx scripts/verify-instrument.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",
@@ -44,7 +45,8 @@
     "verify:walk": "tsx scripts/verify-walk.ts",
     "verify:endpoints": "tsx scripts/verify-endpoints.ts",
     "verify:ui": "tsx scripts/verify-ui.ts",
-    "verify:loop-e2e": "tsx scripts/verify-loop-e2e.ts"
+    "verify:loop-e2e": "tsx scripts/verify-loop-e2e.ts",
+    "verify:db-e2e": "tsx scripts/verify-db-e2e.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",

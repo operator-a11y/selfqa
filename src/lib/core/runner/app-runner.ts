@@ -94,6 +94,7 @@ async function launchServer(
   dir: string,
   id: string,
   readyTimeoutMs: number,
+  extraEnv: Record<string, string> = {},
 ): Promise<RunningApp> {
   const port = await allocatePort();
   const url = `http://127.0.0.1:${port}`;
@@ -102,7 +103,9 @@ async function launchServer(
   const proc = spawn("npm", ["run", "start", "--", "-p", String(port)], {
     cwd: dir,
     detached: true,
-    env: { ...process.env, ...egressEnv() },
+    // extraEnv (e.g. a per-lane DATABASE_URL) is read by the app at REQUEST time,
+    // never baked into the shared `next build` (SPEC §9.3 runtime-env contract).
+    env: { ...process.env, ...egressEnv(), ...extraEnv },
     stdio: ["ignore", "ignore", "pipe"],
   });
   proc.stderr?.on("data", (d: Buffer) => {
@@ -135,6 +138,70 @@ export async function startApp(
   await ensureDeps(dir);
   await nextBuild(dir);
   return launchServer(dir, opts.id, opts.readyTimeoutMs ?? 90_000);
+}
+
+/**
+ * §9.3 restore-to-seed: byte-copy the seed db onto a lane's file AND remove the
+ * -wal/-shm sidecars (the WAL-leak trap a shared/stale connection falls into).
+ * A standalone primitive — usable by the isolation gate without the pool.
+ */
+export async function restoreToSeed(seedPath: string, lanePath: string): Promise<void> {
+  await fs.copyFile(seedPath, lanePath);
+  for (const sfx of ["-wal", "-shm"]) {
+    await fs.rm(lanePath + sfx, { force: true });
+  }
+}
+
+export interface AppPoolSlot {
+  slotId: number;
+  app: RunningApp;
+  dbPath: string;
+  url: string;
+}
+export interface AppPool {
+  slots: AppPoolSlot[];
+  /** base url per lane, indexed by slotId (what walkAll consumes for db-file-copy). */
+  baseUrls: string[];
+  restoreToSeed: (slot: number) => Promise<void>;
+  stop: () => Promise<void>;
+}
+
+/**
+ * Start N LANE-BOUND servers from ONE shared production build (SPEC §9.3):
+ * `next build` once, then `next start` N times — each on its own port with its
+ * own DATABASE_URL pointing at a per-lane SQLite file seeded from `seedDbPath`.
+ * Lane w -> server w -> port w -> db w. Pair with DbRestoreIsolation, whose
+ * before(ctx, slot) calls the returned `restoreToSeed(slot)`.
+ */
+export async function startAppPool(
+  dir: string,
+  opts: {
+    id: string;
+    workers: number;
+    seedDbPath: string;
+    laneDbPath: (slot: number) => string;
+    dbEnvName?: string;
+    readyTimeoutMs?: number;
+  },
+): Promise<AppPool> {
+  await ensureDeps(dir);
+  await nextBuild(dir); // ONE shared build; env is supplied at start, not bake time
+  const envName = opts.dbEnvName ?? "DATABASE_URL";
+  const slots: AppPoolSlot[] = [];
+  for (let slot = 0; slot < opts.workers; slot++) {
+    const dbPath = opts.laneDbPath(slot);
+    await restoreToSeed(opts.seedDbPath, dbPath);
+    const app = await launchServer(dir, `${opts.id}-slot${slot}`, opts.readyTimeoutMs ?? 90_000, {
+      [envName]: dbPath,
+    });
+    slots.push({ slotId: slot, app, dbPath, url: app.url });
+  }
+  return {
+    slots,
+    baseUrls: slots.map((s) => s.url),
+    restoreToSeed: (slot) => restoreToSeed(opts.seedDbPath, slots[slot].dbPath),
+    stop: () => Promise.all(slots.map((s) => stopApp(s.app))).then(() => undefined),
+  };
 }
 
 /** Reflect an edit: stop, rebuild, relaunch (production has no Fast-Refresh). */
