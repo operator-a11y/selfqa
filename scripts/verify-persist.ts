@@ -24,6 +24,8 @@ import type {
   Verdict,
   Action,
   GroundedFeedback,
+  RunDiff,
+  RegressionTest,
 } from "../src/lib/core/domain/types";
 import { InMemoryStore } from "../src/lib/core/persist/in-memory-store";
 import { SqliteStore } from "../src/lib/core/persist/sqlite-store";
@@ -133,6 +135,19 @@ const tuple: GroundedFeedback = {
   assertion: { type: "deterministic", predicate: { kind: "text-equals", selector: "[data-testid=title]", expected: "Edited" }, nl: "title says Edited" },
 };
 
+function regTest(id: string): RegressionTest {
+  return {
+    id,
+    name: "Mission " + id,
+    mission: mission(id, "[data-testid=" + id + "]"),
+    frozenAtSha: SHA2,
+    frozenVerdict: "pass",
+    kind: "deterministic",
+    status: "active",
+    createdAt: "2026-06-08T00:00:00.000Z",
+  };
+}
+
 const metrics: MetricEvent[] = [
   { appId: "app-1", type: "comment-assertion-compiled", value: 1, detail: "deterministic", buildSha: SHA2 },
   { appId: "app-1", type: "rewalk-bucket-decided", value: 0, detail: "local", buildSha: SHA2 },
@@ -144,7 +159,8 @@ function exercise(store: MetadataStore): Record<string, unknown> {
   store.saveRun(runAt(SHA1, "fail"), undefined);
   store.saveRun(runAt(SHA2, "pass"), SHA1);
   store.saveComment(tuple, "app-1");
-  store.promoteRegressionTest("app-1", "mission-add-todo");
+  store.promoteRegressionTest("app-1", regTest("mission-add-todo"));
+  store.promoteRegressionTest("app-1", regTest("mission-broken"));
   store.proposeRetirement("app-1", "mission-broken", "flaky, never reaches");
   for (const m of metrics) store.recordMetric(m);
   store.setParallelDbVerdictsTrusted(false);
@@ -205,23 +221,27 @@ function main(): void {
   truthy("before-state round-trips; checker sees title 'Original' != 'Edited' (false)", check.satisfied === false);
 
   // 5. run-to-run diff by stable mission id: add-todo flips fail -> pass.
-  const diff = sqlOut.diff as { newlyPass: string[] };
-  truthy("diff: mission-add-todo newly passes SHA1->SHA2", diff.newlyPass.includes("mission-add-todo"));
+  const diff = sqlOut.diff as RunDiff;
+  truthy(
+    "diff: mission-add-todo newly passes SHA1->SHA2",
+    diff.counts.newlyPass >= 1 && diff.entries.some((e) => e.missionId === "mission-add-todo" && e.kind === "newly-pass"),
+  );
+  truthy("diff carries fromSha/toSha (SHA_n vs SHA_{n-1})", diff.fromSha === SHA1 && diff.toSha === SHA2);
 
   // 6. DURABILITY: close + reopen the SQLite db; everything is still there.
   sql.close();
   const reopened = new SqliteStore(dbPath);
   truthy("reopen: app persists", reopened.getApp("app-1")?.prompt === "a todo app");
   truthy("reopen: latest run persists (SHA2, 3 missions)", reopened.getRun("app-1")?.buildSha === SHA2 && reopened.getRun("app-1")?.missions.length === 3);
-  truthy("reopen: promoted regression test persists", reopened.listRegressionTests("app-1").some((r) => r.missionId === "mission-add-todo" && r.humanApproved));
-  truthy("reopen: proposed retirement persists", reopened.listRegressionTests("app-1").some((r) => r.missionId === "mission-broken" && !!r.retirementProposed));
+  truthy("reopen: promoted regression test persists (active, frozen Mission)", reopened.listRegressionTests("app-1").some((r) => r.id === "mission-add-todo" && r.status === "active" && r.mission.acceptanceCriteria.length > 0 && r.kind === "deterministic"));
+  truthy("reopen: proposed retirement persists (status + reason, NOT dropped)", reopened.listRegressionTests("app-1").some((r) => r.id === "mission-broken" && r.status === "retirement-proposed" && r.retirementProposal?.reason === "flaky, never reaches"));
   truthy("reopen: comment tuple persists", reopened.listComments("app-1").some((c) => c.id === "fb-1"));
   truthy("reopen: metrics persist (2 events)", reopened.listMetrics("app-1").length === 2);
 
-  // 7. human-approval lifecycle: approve retirement clears approval.
+  // 7. human-approval lifecycle: approve retirement -> status retired (the only path).
   reopened.approveRetirement("app-1", "mission-add-todo");
-  const afterRetire = reopened.listRegressionTests("app-1").find((r) => r.missionId === "mission-add-todo");
-  truthy("approve-retire clears humanApproved", afterRetire?.humanApproved === false);
+  const afterRetire = reopened.getRegressionTest("app-1", "mission-add-todo");
+  truthy("approve-retire sets status retired (the only path to 'retired')", afterRetire?.status === "retired");
 
   // identical diff result across backends too (already covered by loop, assert explicitly).
   eq("diffRuns identical across backends", mem.diffRuns("app-1", SHA1, SHA2), reopened.diffRuns("app-1", SHA1, SHA2));

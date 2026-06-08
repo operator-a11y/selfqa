@@ -192,7 +192,66 @@ export interface MissionRun {
 export interface RunRecord {
   appId: string;
   buildSha: string;
+  /** the build this run's edit descended from — the run-to-run diff's SHA_{n-1} (SPEC §11.1). */
+  parentSha?: string;
   missions: MissionRun[];
+}
+
+// ── Regression memory (SPEC §7.5, §11.4) — a RegressionTest IS a Mission ───────
+
+/** A frozen test is deterministic iff EVERY frozen criterion is deterministic. */
+export type RegressionKind = "deterministic" | "semantic";
+
+/** Lifecycle (SPEC §7.5): promoted -> active; retirement is propose-then-human-approve. */
+export type RegressionStatus = "active" | "retirement-proposed" | "retired";
+
+/**
+ * SPEC §7.5 — a human-approved regression test. It IS a Mission: its frozen
+ * `acceptanceCriteria` ARE the typed `Assertion[]` the ONE checker replays as a
+ * THIRD entry point (first-walk, re-walk, regression replay). `kind` is DERIVED
+ * from the criteria (never declared); `status` only ever advances by human action.
+ */
+export interface RegressionTest {
+  id: string; // == the minted mission id
+  name: string;
+  mission: Mission; // frozen; acceptanceCriteria ARE the typed Assertion[]
+  frozenAtSha: string;
+  frozenVerdict: VerdictStatus;
+  kind: RegressionKind; // derived from mission.acceptanceCriteria
+  status: RegressionStatus;
+  retirementProposal?: { reason: string };
+  createdAt?: string; // iso timestamp, stamped by the worker at promotion
+}
+
+// ── Run-to-run diff (SPEC §11.1) — the DERIVED reviewable artifact ─────────────
+
+export type MissionDiffKind =
+  | "newly-pass" // prev fail/ambiguous -> curr pass
+  | "newly-fail" // prev pass -> curr fail
+  | "changed-outcome" // any other status change
+  | "new-surface" // id absent in prev (a net-new mission this build)
+  | "retired-surface" // id present in prev, absent in curr
+  | "unchanged";
+
+export interface MissionDiffEntry {
+  missionId: string;
+  from: VerdictStatus | null; // null for a new surface
+  to: VerdictStatus | null; // null for a retired surface
+  kind: MissionDiffKind;
+}
+
+export interface RunDiff {
+  fromSha: string | null; // null when there is no prior run
+  toSha: string;
+  entries: MissionDiffEntry[];
+  counts: {
+    newlyPass: number;
+    newlyFail: number;
+    changedOutcome: number;
+    newSurface: number;
+    retiredSurface: number;
+    unchanged: number;
+  };
 }
 
 /** SPEC §3 — the captured snapshot leg of the tuple (real on-disk artifacts). */

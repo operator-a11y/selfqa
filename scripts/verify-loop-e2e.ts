@@ -127,11 +127,24 @@ async function main(): Promise<void> {
     console.log(`   [timing] comment→edit→rebuild→re-walk→flip: ${since(t)} (ONE re-walk, not the cap-3 loop)`);
     truthy("codegen consumed the assertion → re-walk FLIPPED fail→pass", cmt.flip?.assertionResult === "flipped" && cmt.flip?.verdict?.status === "pass");
     truthy("re-walk recompile rate is a number (manifest-scoped)", typeof cmt.recompileRate === "number");
-    truthy("run-to-run diff: the hero newly PASSES", Array.isArray(cmt.diff?.newlyPass) && cmt.diff.newlyPass.includes(target.mission.id));
+    truthy(
+      "run-to-run diff: the hero newly PASSES (stable-id entry + count)",
+      cmt.diff?.counts?.newlyPass >= 1 &&
+        Array.isArray(cmt.diff?.entries) &&
+        cmt.diff.entries.some((e: { missionId: string; kind: string }) => e.missionId === target.mission.id && e.kind === "newly-pass"),
+    );
+
+    // the regression gate is wired (no active frozen test yet → not blocked).
+    truthy("comment response carries the regression gate (wired, M5-L)", !!cmt.regressionGate && cmt.regressionGate.blocked === false);
 
     // ── promote to a permanent regression test (human approval) ──────────────
     const prom = await post("/api/promote", { appId: build.appId, missionId: target.mission.id });
     truthy("promote mints a permanent regression test", prom.ok === true && prom.regressionPromoted === true);
+    const regs = await (await fetch(BASE + `/api/regressions?appId=${build.appId}`)).json();
+    truthy(
+      "the hero is now an ACTIVE, Mission-shaped frozen regression test (kind derived)",
+      Array.isArray(regs.tests) && regs.tests.some((t: { id: string; status: string; kind: string }) => t.id === target.mission.id && t.status === "active"),
+    );
 
     // ── NO LLM ON THE HOT PATH (structural; the marked re-walk loop region) ──
     const rewalkSrc = readFileSync("src/lib/core/rewalk/run-rewalk.ts", "utf8");
@@ -158,6 +171,10 @@ async function main(): Promise<void> {
     truthy("after restart: the promoted regression test persisted", heroAfter?.regressionPromoted === true);
     const metrics = await (await fetch(BASE + `/api/metrics?appId=${build.appId}`)).json();
     truthy("after restart: the comment's metric events persisted (det assertion)", metrics.detSemantic?.deterministic >= 1);
+    const regsAfter = await (await fetch(BASE + `/api/regressions?appId=${build.appId}`)).json();
+    truthy("after restart: the regression test is still on record (durable memory, M5-L)", regsAfter.tests?.some((t: { id: string }) => t.id === target.mission.id));
+    const diffAfter = await (await fetch(BASE + `/api/diff?appId=${build.appId}&from=${build.sha}&to=${cmt.sha}`)).json();
+    truthy("after restart: the run-to-run diff is a durable derived query (hero newly-pass)", Array.isArray(diffAfter.entries) && diffAfter.entries.some((e: { missionId: string; kind: string }) => e.missionId === target.mission.id && e.kind === "newly-pass"));
   } finally {
     kill(worker);
     await sleep(500);

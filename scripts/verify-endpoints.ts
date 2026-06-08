@@ -140,6 +140,26 @@ async function main(): Promise<void> {
       "/api/metrics reports a bucket decision + a terminated loop attempt",
       (metrics.bucket?.everything + metrics.bucket?.local) >= 1 && metrics.attempts?.total >= 1,
     );
+
+    // M5-L: the promoted test is a durable, Mission-shaped, kind-derived regression test.
+    const regs1 = await (await fetch(base + `/api/regressions?appId=${build.appId}`)).json();
+    truthy(
+      "/api/regressions lists the promoted test as ACTIVE (kind derived, frozen at a sha)",
+      Array.isArray(regs1.tests) &&
+        regs1.tests.some((t: { id: string; status: string; kind: string; frozenAtSha: string }) => t.id === target.mission.id && t.status === "active" && (t.kind === "deterministic" || t.kind === "semantic") && !!t.frozenAtSha),
+    );
+
+    // M5-L lifecycle: propose-then-human-approve, NEVER an auto-drop (P1).
+    await fetch(base + "/api/retire", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appId: build.appId, missionId: target.mission.id, reason: "noisy" }) });
+    const regs2 = await (await fetch(base + `/api/regressions?appId=${build.appId}`)).json();
+    truthy("/api/retire (propose) -> status retirement-proposed, test NOT dropped", regs2.tests.some((t: { id: string; status: string }) => t.id === target.mission.id && t.status === "retirement-proposed"));
+    await fetch(base + "/api/retire", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ appId: build.appId, missionId: target.mission.id, approve: true }) });
+    const regs3 = await (await fetch(base + `/api/regressions?appId=${build.appId}`)).json();
+    truthy("/api/retire (approve) -> status retired (human-approved only)", regs3.tests.some((t: { id: string; status: string }) => t.id === target.mission.id && t.status === "retired"));
+
+    // M5-L: the run-to-run diff is a durable, derived SHA_n-vs-SHA_{n-1} query.
+    const diff = await (await fetch(base + `/api/diff?appId=${build.appId}&from=${build.sha}&to=${cmt.sha}`)).json();
+    truthy("/api/diff returns the durable rich diff (entries + counts, fromSha/toSha)", Array.isArray(diff.entries) && !!diff.counts && diff.fromSha === build.sha && diff.toSha === cmt.sha);
   } finally {
     if (worker.pid) {
       try {

@@ -34,6 +34,8 @@
     "verify:converge": "tsx scripts/verify-converge.ts",
     "verify:persist": "tsx scripts/verify-persist.ts",
     "verify:metrics": "tsx scripts/verify-metrics.ts",
+    "verify:diff": "tsx scripts/verify-diff.ts",
+    "verify:regression": "tsx scripts/verify-regression.ts",
     "verify:runner": "tsx scripts/verify-runner.ts",
     "verify:instrument": "tsx scripts/verify-instrument.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",

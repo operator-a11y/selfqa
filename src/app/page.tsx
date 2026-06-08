@@ -45,10 +45,17 @@ interface FlipT {
   resolved: boolean;
   detail: string;
 }
+interface DiffEntryT {
+  missionId: string;
+  from: string | null;
+  to: string | null;
+  kind: "newly-pass" | "newly-fail" | "changed-outcome" | "new-surface" | "retired-surface" | "unchanged";
+}
 interface DiffT {
-  newlyPass: string[];
-  newlyFail: string[];
-  changed: { missionId: string; from: string; to: string }[];
+  fromSha: string | null;
+  toSha: string;
+  entries: DiffEntryT[];
+  counts: { newlyPass: number; newlyFail: number; changedOutcome: number; newSurface: number; retiredSurface: number; unchanged: number };
 }
 interface CommentTarget {
   url: string;
@@ -61,6 +68,15 @@ interface MetricsT {
   bucket: { everything: number; local: number; everythingFraction: number };
   attempts: { histogram: Record<number, number>; cap: number; total: number; resolved: number };
   totalEvents: number;
+}
+
+interface RegressionT {
+  id: string;
+  name: string;
+  kind: "deterministic" | "semantic";
+  status: "active" | "retirement-proposed" | "retired";
+  frozenAtSha: string;
+  frozenVerdict: string;
 }
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -99,6 +115,7 @@ export default function Home() {
   const [commentText, setCommentText] = useState("");
   const [flip, setFlip] = useState<FlipT | null>(null);
   const [diff, setDiff] = useState<DiffT | null>(null);
+  const [regressions, setRegressions] = useState<RegressionT[]>([]);
 
   // explore (iframe) state — M1 flow
   const [commentMode, setCommentMode] = useState(false);
@@ -191,6 +208,17 @@ export default function Home() {
     }
   }
 
+  async function fetchRegressions() {
+    if (!app) return;
+    try {
+      const res = await fetch(`/api/regressions?appId=${encodeURIComponent(app.appId)}`);
+      const data = await res.json();
+      if (res.ok) setRegressions((data.tests ?? []) as RegressionT[]);
+    } catch {
+      /* ignore */
+    }
+  }
+
   async function promote(missionId: string) {
     if (!app) return;
     try {
@@ -201,6 +229,7 @@ export default function Home() {
       });
       setStatus(`Promoted ${missionId} to a permanent regression test.`);
       await refreshMissions();
+      void fetchRegressions();
     } catch (e) {
       setStatus(`Promote: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -249,6 +278,7 @@ export default function Home() {
       if (iframeRef.current) iframeRef.current.src = `${newUrl}?t=${Date.now()}`;
       await refreshMissions();
       void fetchMetrics();
+      void fetchRegressions();
     } catch (e) {
       setStatus(`Comment: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -357,16 +387,36 @@ export default function Home() {
             </div>
           )}
 
-          {diff && (diff.newlyPass.length > 0 || diff.newlyFail.length > 0 || diff.changed.length > 0) && (
+          {diff && diff.entries.some((e) => e.kind !== "unchanged") && (
             <div className="rounded bg-gray-50 p-2 text-xs text-gray-700" data-testid="run-diff">
-              <div className="font-medium">Run-to-run diff (SHA vs SHA)</div>
-              {diff.newlyPass.length > 0 && <div className="text-green-700">newly pass: {diff.newlyPass.join(", ")}</div>}
-              {diff.newlyFail.length > 0 && <div className="text-red-700">newly fail: {diff.newlyFail.join(", ")}</div>}
-              {diff.changed.map((c) => (
-                <div key={c.missionId}>
-                  {c.missionId}: {c.from} → {c.to}
+              <div className="font-medium">
+                Run-to-run diff ({diff.fromSha ? diff.fromSha.slice(0, 7) : "∅"} → {diff.toSha.slice(0, 7)})
+              </div>
+              {diff.entries
+                .filter((e) => e.kind !== "unchanged")
+                .map((e) => (
+                  <div
+                    key={e.missionId}
+                    className={e.kind === "newly-pass" ? "text-green-700" : e.kind === "newly-fail" ? "text-red-700" : "text-gray-700"}
+                  >
+                    {e.missionId}: {e.from ?? "∅"} → {e.to ?? "∅"} <span className="text-gray-400">({e.kind})</span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {regressions.length > 0 && (
+            <div className="rounded border border-green-200 bg-green-50 p-2 text-xs" data-testid="regression-list">
+              <div className="font-medium text-green-800">Regression memory ({regressions.length})</div>
+              {regressions.map((r) => (
+                <div key={r.id} className="flex items-center justify-between gap-2 text-gray-700" data-testid="regression-row">
+                  <span className="truncate">{r.name}</span>
+                  <span className="shrink-0 text-gray-500">
+                    {r.kind} · {r.status}
+                  </span>
                 </div>
               ))}
+              <div className="mt-1 text-gray-500">Frozen, human-approved — replayed + gated on every later build.</div>
             </div>
           )}
         </aside>

@@ -90,6 +90,10 @@ async function main(): Promise<void> {
     const promoteText = (await page.getByTestId("promote-mission").textContent()) ?? "";
     truthy("promote marks the mission a regression test", promoteText.includes("✓"));
 
+    // M5-L: the durable regression-memory registry surfaces in the sidebar.
+    truthy("regression memory list appears after promote", await ok(page.getByTestId("regression-list").waitFor({ timeout: 10000 })));
+    truthy("a frozen regression test is listed (kind · status)", (await page.getByTestId("regression-row").count()) >= 1);
+
     // M6-B: the Metrics tab renders the four metrics from the comment we just made.
     await page.getByTestId("tab-metrics").click();
     truthy("metrics panel renders", await ok(page.getByTestId("metrics-panel").waitFor({ timeout: 10000 })));

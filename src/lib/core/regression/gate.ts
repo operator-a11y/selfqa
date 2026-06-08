@@ -6,9 +6,9 @@
  *     (mechanically certain; enforce past human judgment, relationship #2);
  *   - semantic frozen test that flipped -> surface (newly-failing, relationship #3).
  */
-import type { Assertion } from "../domain/types";
+import type { Assertion, RegressionKind } from "../domain/types";
 
-export type RegressionKind = "deterministic" | "semantic";
+export type { RegressionKind };
 
 export interface FrozenResult {
   testId: string;

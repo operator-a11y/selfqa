@@ -26,6 +26,8 @@ const FAST = [
   "verify-converge",
   "verify-persist",
   "verify-metrics",
+  "verify-diff",
+  "verify-regression",
 ];
 const HEAVY = [
   "verify-action-capture",

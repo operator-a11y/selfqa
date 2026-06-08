@@ -245,44 +245,54 @@ export class SqliteStore implements MetadataStore {
   }
 
   // ── regression lifecycle ─────────────────────────────────────────────────────
-  promoteRegressionTest(appId: string, missionId: string): void {
-    this.writeRegression(appId, missionId, true, undefined);
-  }
-  proposeRetirement(appId: string, missionId: string, reason: string): void {
-    const existing = this.db
-      .prepare(`SELECT human_approved FROM regression_test WHERE app_id=? AND mission_id=?`)
-      .get(appId, missionId) as { human_approved: number } | undefined;
-    this.writeRegression(appId, missionId, !!existing?.human_approved, reason);
-  }
-  approveRetirement(appId: string, missionId: string): void {
-    this.writeRegression(appId, missionId, false, undefined);
-  }
-  private writeRegression(
-    appId: string,
-    missionId: string,
-    humanApproved: boolean,
-    retirementReason: string | undefined,
-  ): void {
+  promoteRegressionTest(appId: string, test: RegressionTest): void {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO regression_test
-         (app_id, mission_id, human_approved, retirement_reason, seq) VALUES (?,?,?,?,?)`,
+         (app_id, mission_id, name, mission_json, frozen_at_sha, frozen_verdict, kind, status, retirement_reason, created_at, seq)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(appId, missionId, humanApproved ? 1 : 0, n(retirementReason), this.nextSeq());
+      .run(
+        appId,
+        test.id,
+        test.name,
+        JSON.stringify(test.mission),
+        test.frozenAtSha,
+        test.frozenVerdict,
+        test.kind,
+        "active",
+        n(test.retirementProposal?.reason),
+        n(test.createdAt),
+        this.nextSeq(),
+      );
   }
-  listRegressionTests(appId: string): RegressionTest[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM regression_test WHERE app_id=? ORDER BY seq ASC`)
-      .all(appId) as unknown as RegressionDbRow[];
-    return rows.map((r) => {
-      const rt: RegressionTest = {
-        appId: r.app_id,
-        missionId: r.mission_id,
-        humanApproved: !!r.human_approved,
-      };
-      if (r.retirement_reason !== null) rt.retirementProposed = { reason: r.retirement_reason };
-      return rt;
-    });
+  proposeRetirement(appId: string, missionId: string, reason: string): void {
+    // status -> retirement-proposed; NEVER deletes the row (P1: no auto-drop).
+    this.db
+      .prepare(`UPDATE regression_test SET status=?, retirement_reason=? WHERE app_id=? AND mission_id=?`)
+      .run("retirement-proposed", reason, appId, missionId);
+  }
+  approveRetirement(appId: string, missionId: string): void {
+    // the ONLY path that sets 'retired' (human-approved).
+    this.db
+      .prepare(`UPDATE regression_test SET status=? WHERE app_id=? AND mission_id=?`)
+      .run("retired", appId, missionId);
+  }
+  getRegressionTest(appId: string, missionId: string): RegressionTest | null {
+    const r = this.db
+      .prepare(`SELECT * FROM regression_test WHERE app_id=? AND mission_id=?`)
+      .get(appId, missionId) as RegressionDbRow | undefined;
+    return r ? regressionFromRow(r) : null;
+  }
+  listRegressionTests(appId: string, opts?: { status?: RegressionTest["status"] }): RegressionTest[] {
+    const rows = (
+      opts?.status
+        ? this.db
+            .prepare(`SELECT * FROM regression_test WHERE app_id=? AND status=? ORDER BY mission_id ASC`)
+            .all(appId, opts.status)
+        : this.db.prepare(`SELECT * FROM regression_test WHERE app_id=? ORDER BY mission_id ASC`).all(appId)
+    ) as unknown as RegressionDbRow[];
+    return rows.map(regressionFromRow);
   }
 
   // ── metrics ──────────────────────────────────────────────────────────────────
@@ -347,8 +357,31 @@ interface VerdictDbRow {
 interface RegressionDbRow {
   app_id: string;
   mission_id: string;
-  human_approved: number;
+  name: string;
+  mission_json: string;
+  frozen_at_sha: string;
+  frozen_verdict: string;
+  kind: string;
+  status: string;
   retirement_reason: string | null;
+  created_at: string | null;
+}
+
+function regressionFromRow(r: RegressionDbRow): RegressionTest {
+  const t: RegressionTest = {
+    id: r.mission_id,
+    name: r.name,
+    mission: JSON.parse(r.mission_json),
+    frozenAtSha: r.frozen_at_sha,
+    frozenVerdict: r.frozen_verdict as RegressionTest["frozenVerdict"],
+    kind: r.kind as RegressionTest["kind"],
+    status: r.status as RegressionTest["status"],
+  };
+  // key order matches the in-memory store (createdAt is part of the frozen test;
+  // retirementProposal is appended on propose) so JSON round-trips are identical.
+  if (r.created_at !== null) t.createdAt = r.created_at;
+  if (r.retirement_reason !== null) t.retirementProposal = { reason: r.retirement_reason };
+  return t;
 }
 interface MetricDbRow {
   app_id: string;

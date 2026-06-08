@@ -21,9 +21,13 @@ import type {
   Verdict,
   GroundedFeedback,
   Action,
+  RegressionTest,
+  RegressionStatus,
 } from "../domain/types";
 import type { RunDiff } from "../regression/diff";
 import { computeRunDiff } from "../regression/diff";
+
+export type { RegressionTest } from "../domain/types";
 
 /** Durable identity of a built app (the repo/subprocess handles stay in-process). */
 export interface AppMeta {
@@ -31,14 +35,6 @@ export interface AppMeta {
   prompt: string;
   /** the commit SHA the app was first written at (SPEC §9.1) */
   createdSha?: string;
-}
-
-/** A human-approved regression test or a proposed retirement (SPEC §7.5). */
-export interface RegressionTest {
-  appId: string;
-  missionId: string;
-  humanApproved: boolean;
-  retirementProposed?: { reason: string };
 }
 
 /**
@@ -88,10 +84,14 @@ export interface MetadataStore {
   listComments(appId: string): GroundedFeedback[];
 
   // ── regression lifecycle — human approval only (SPEC §7.5, P1) ──────────────
-  promoteRegressionTest(appId: string, missionId: string): void;
+  /** Mint/replace a frozen, Mission-shaped regression test (status active). */
+  promoteRegressionTest(appId: string, test: RegressionTest): void;
+  /** Propose retirement: status -> retirement-proposed. NEVER drops the test (P1). */
   proposeRetirement(appId: string, missionId: string, reason: string): void;
+  /** The ONLY path that retires a test: status -> retired (human-approved). */
   approveRetirement(appId: string, missionId: string): void;
-  listRegressionTests(appId: string): RegressionTest[];
+  getRegressionTest(appId: string, missionId: string): RegressionTest | null;
+  listRegressionTests(appId: string, opts?: { status?: RegressionStatus }): RegressionTest[];
 
   // ── metrics (M6-B) ──────────────────────────────────────────────────────────
   recordMetric(event: MetricEvent): void;
@@ -124,7 +124,7 @@ export function diffFromRuns(
   const from = store.getRun(appId, fromSha);
   const to = store.getRun(appId, toSha);
   if (!from || !to) return null;
-  return computeRunDiff(from.missions, to.missions);
+  return computeRunDiff(from, to);
 }
 
 /** Deep, JSON-canonical clone — drops `undefined`, identical to a SQLite JSON

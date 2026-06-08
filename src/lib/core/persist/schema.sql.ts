@@ -24,7 +24,7 @@
  *    convert at the edge so both backends round-trip to identical JS booleans.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2; // v2: regression_test holds the frozen Mission + status/kind (M5-L)
 
 export const SCHEMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -102,9 +102,15 @@ CREATE TABLE IF NOT EXISTS assertion (
 
 CREATE TABLE IF NOT EXISTS regression_test (
   app_id            TEXT NOT NULL,
-  mission_id        TEXT NOT NULL,
-  human_approved    INTEGER NOT NULL DEFAULT 0,
+  mission_id        TEXT NOT NULL,  -- == test.id == the frozen mission id
+  name              TEXT NOT NULL,
+  mission_json      TEXT NOT NULL,  -- the frozen Mission (criteria ARE the typed assertions)
+  frozen_at_sha     TEXT NOT NULL,
+  frozen_verdict    TEXT NOT NULL,
+  kind              TEXT NOT NULL,  -- DERIVED: deterministic | semantic
+  status            TEXT NOT NULL,  -- active | retirement-proposed | retired
   retirement_reason TEXT,
+  created_at        TEXT,
   seq               INTEGER NOT NULL,
   PRIMARY KEY (app_id, mission_id)
 );

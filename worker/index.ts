@@ -44,6 +44,8 @@ import { classifyDiff, selectRewalkSet } from "../src/lib/core/verify/manifest";
 import { planReWalk } from "../src/lib/core/rewalk/plan";
 import { reWalk } from "../src/lib/core/rewalk/run-rewalk";
 import { computeRunDiff } from "../src/lib/core/regression/diff";
+import { deriveRegressionKind, evaluateRegressionGate } from "../src/lib/core/regression/gate";
+import { frozenStatus } from "../src/lib/core/regression/replay";
 import { makeMetadataStore } from "../src/lib/core/persist/factory";
 import {
   commentAssertionCompiled,
@@ -52,7 +54,7 @@ import {
   commentLoopTerminated,
 } from "../src/lib/core/metrics/events";
 import { aggregateMetrics } from "../src/lib/core/metrics/aggregate";
-import type { CommentType, RunRecord } from "../src/lib/core/domain/types";
+import type { CommentType, RunRecord, RegressionTest } from "../src/lib/core/domain/types";
 
 const PORT = Number(process.env.SELFQA_WORKER_PORT ?? 4317);
 const provider = getProvider();
@@ -170,6 +172,23 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, aggregateMetrics(store.listMetrics(appId)));
     }
 
+    if (req.method === "GET" && pathname === "/api/diff") {
+      // The run-to-run diff as a durable, derived query (M5-L, SPEC §11.1).
+      const appId = url.searchParams.get("appId") ?? "";
+      const from = url.searchParams.get("from") ?? "";
+      const to = url.searchParams.get("to") ?? "";
+      const d = store.diffRuns(appId, from, to);
+      if (!d) return sendJson(res, 404, { error: "need two persisted runs (from, to)" });
+      return sendJson(res, 200, d);
+    }
+
+    if (req.method === "GET" && pathname === "/api/regressions") {
+      // The durable, human-approved regression registry (M5-L, SPEC §7.5).
+      const appId = url.searchParams.get("appId") ?? "";
+      const status = url.searchParams.get("status") as RegressionTest["status"] | null;
+      return sendJson(res, 200, { tests: store.listRegressionTests(appId, status ? { status } : undefined) });
+    }
+
     if (req.method === "GET" && pathname === "/api/artifact") {
       const p = url.searchParams.get("path") ?? "";
       if (!p) return sendJson(res, 400, { error: "path required" });
@@ -238,7 +257,6 @@ const server = http.createServer(async (req, res) => {
           .filter((o) => o.resolved && o.verdict.status === "pass")
           .map((o) => [o.missionId, o.verdict]),
       );
-      const prior = run.missions;
       const next = run.missions.map((m) => {
         const u = updatedById.get(m.mission.id);
         const merged = u ? { ...u, regressionPromoted: m.regressionPromoted, retirementProposed: m.retirementProposed } : m;
@@ -246,11 +264,31 @@ const server = http.createServer(async (req, res) => {
         return rv ? { ...merged, verdict: { ...rv, buildSha: shaAfter } } : merged;
       });
       next.sort((a, b) => rankVerdict(a.verdict.status) - rankVerdict(b.verdict.status));
-      const nextRun: RunRecord = { appId, buildSha: shaAfter, missions: next };
+      const nextRun: RunRecord = { appId, buildSha: shaAfter, parentSha: shaBefore, missions: next };
       runs.set(appId, nextRun);
       store.saveRun(nextRun, shaBefore); // new build's verdicts are durable; parent = pre-edit sha
-      const diff = computeRunDiff(prior, next);
+      const diff = computeRunDiff(run, nextRun); // SHA_n vs SHA_{n-1}, matched by stable id
       const flip = record.outcomes[0];
+
+      // M5-L fix-induced regression gate (SPEC §11.4): replay the ACTIVE frozen
+      // tests in the re-walked (affected) set through the checker results THIS
+      // re-walk already computed (run.ts criteriaResults — zero extra LLM, P1),
+      // and route pass→fail flips by kind (deterministic = hard-block, §11.4).
+      const rewalkedById = new Map(next.map((m) => [m.mission.id, m]));
+      const frozenResults = store
+        .listRegressionTests(appId, { status: "active" })
+        .filter((t) => affectedIds.includes(t.id))
+        .map((t) => {
+          const fm = rewalkedById.get(t.id);
+          const nowStatus = fm?.criteriaResults
+            ? frozenStatus(fm.criteriaResults.map((r) => r.check.satisfied))
+            : "ambiguous";
+          return { testId: t.id, kind: t.kind, wasPass: t.frozenVerdict === "pass", flippedToFail: nowStatus === "fail" };
+        });
+      const regressionGate = evaluateRegressionGate(frozenResults);
+      if (regressionGate.blocked) {
+        console.log(`[worker] REGRESSION GATE blocked: ${regressionGate.hardBlocks.join(", ")}`);
+      }
 
       // metrics (M6-B) — emitted once, off the hot path, from GENUINE decisions:
       // the compiled assertion's type, the planner's per-mission recompile flag,
@@ -272,6 +310,7 @@ const server = http.createServer(async (req, res) => {
         recompileRate: record.recompileRate,
         flip,
         diff,
+        regressionGate,
         commentAssertion: tuple.feedback.assertion,
       });
     }
@@ -281,12 +320,23 @@ const server = http.createServer(async (req, res) => {
       const run = runs.get(String(body.appId ?? ""));
       const mr = run?.missions.find((m) => m.mission.id === String(body.missionId ?? ""));
       if (!run || !mr) return sendJson(res, 404, { error: "unknown mission/run" });
-      // Human approval mints a permanent regression test (§7.5) — durable (M5-K).
+      // Human approval mints a permanent, Mission-shaped regression test (§7.5) —
+      // frozen at this build, kind DERIVED from its criteria; durable (M5-K/M5-L).
       mr.regressionPromoted = true;
       mr.retirementProposed = undefined;
-      store.promoteRegressionTest(run.appId, mr.mission.id);
+      const test: RegressionTest = {
+        id: mr.mission.id,
+        name: mr.mission.name,
+        mission: mr.mission,
+        frozenAtSha: run.buildSha,
+        frozenVerdict: mr.verdict.status,
+        kind: deriveRegressionKind(mr.mission.acceptanceCriteria),
+        status: "active",
+        createdAt: new Date().toISOString(),
+      };
+      store.promoteRegressionTest(run.appId, test);
       store.saveRun(run); // persist the per-run promotion flag too
-      return sendJson(res, 200, { ok: true, missionId: mr.mission.id, regressionPromoted: true });
+      return sendJson(res, 200, { ok: true, missionId: mr.mission.id, regressionPromoted: true, kind: test.kind, status: test.status });
     }
 
     if (req.method === "POST" && pathname === "/api/retire") {
