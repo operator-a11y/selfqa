@@ -11,6 +11,33 @@ feedback) is attempted only after the loop and the mission engine already work.*
 
 ---
 
+## Build status — as shipped ✅
+
+**All milestones M1–M6 (incl. every M5 checkpoint A–L and M6 A–D) are implemented,
+verified, and pushed.** Each checkpoint is gated by a `scripts/verify-*.ts` script;
+`npm run verify:all` runs typecheck + lint + all of them green.
+
+| Milestone | Status | Headline verify gate(s) |
+|---|---|---|
+| M1–M2 · prove the loop | ✅ | `verify-loop`, `verify-instrument` |
+| M3–M4 · mission engine | ✅ | `verify-walk`, `verify-first-walk`, `verify-endpoints`, `verify-ui` |
+| M5-A…E · tuple + manifest | ✅ | `verify-tuple-assemble`, `verify-edit-consume`, `verify-manifest` |
+| M5-G…J · flip + re-walk + converge | ✅ | `verify-flip`, `verify-rewalk` (headline), `verify-converge`, `verify-gate` |
+| M5-K · durable persistence | ✅ | `verify-persist` (node:sqlite ⇄ in-memory, restart-safe) |
+| M5-L · regression memory + diff | ✅ | `verify-regression`, `verify-diff` |
+| M5-F / F-INT · per-lane DB isolation | ✅ | `verify-db-isolation` (primitive), `verify-db-e2e` (end-to-end gate) |
+| M6-A…D · worker + UI + metrics + e2e | ✅ | `verify-metrics`, `verify-loop-e2e` (the win condition) |
+
+**As-built note (honesty):** the *generated-app* data layer the §9.3 gate isolates is
+SQLite-per-lane; the DB-backed stub app and SelfQA's own durable metadata both use
+`node:sqlite` (zero engine/network/deps) rather than Prisma — the load-bearing
+property (a server-side write routed by a **runtime** `DATABASE_URL` to a per-lane
+file, with the build-time-inlining trap) is identical, and swapping in Prisma is a
+build-agent prompt change. M7 (coverage side panel) and M8 (dogfood video/essay)
+remain as the explicitly-optional / out-of-code deliverables below.
+
+---
+
 ## Sequencing principles (apply across milestones)
 
 - **Build the verification spine once (SPEC §6).** One typed-assertion checker, three

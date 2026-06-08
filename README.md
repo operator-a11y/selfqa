@@ -51,9 +51,13 @@ refuses to guess*.
 3. **Review** — you get a list sorted *failed > ambiguous > passed*. A 3-minute
    review, not a 30-minute crawl. Click any step to comment.
 4. **Fix** — your comment becomes the tuple above; the agent edits the code and
-   re-walks only what your change touched, proving the assertion flips. The fixed
-   mission becomes a permanent regression test, and a run-to-run diff shows what newly
-   passes, newly fails, or changed.
+   re-walks only what your change touched, proving the deterministic assertion flips
+   **fail → pass**. On your approval the fixed mission becomes a **permanent regression
+   test** — a frozen mission replayed through the *same* checker on every later build,
+   so it can never silently regress — and a **run-to-run diff** shows what newly
+   passes, newly fails, or changed. A **four-metric dashboard** tracks the loop's
+   health, and all of it is **durable**: runs, verdicts, comments, and the regression
+   registry survive a worker restart.
 
 ## Scope (on purpose)
 
@@ -66,18 +70,34 @@ apps.
 > self-prompted code. It is _not_ a sandbox — do not deploy it as a public,
 > multi-tenant, or hosted service.** See [SPEC.md §14.4](./SPEC.md).
 
-## Status
+## Status — complete
 
-**M1 (prove the loop) and M3–M4 (the mission engine) are implemented and verified.**
-End-to-end, no API key required: prompt → build → derive 8–15 missions → walk each
-(Playwright, real Chromium) → a sorted **verdict list** (failed > ambiguous > passed)
-with per-step screenshot/DOM/video → click a step to leave a grounded comment → edit
-→ rebuild → re-verify. It runs on a deterministic **stub** provider by default (no
-token spend); set `ANTHROPIC_API_KEY` for real codegen — the provider is swappable
-behind one interface (SPEC §15).
+**All eight milestones are implemented, verified, and pushed.** The whole loop runs
+end-to-end with **no API key** (a deterministic **stub** provider; set
+`ANTHROPIC_API_KEY` for real codegen — the provider is one swappable interface, SPEC
+§15). The win condition, proven in one uninterrupted test (`verify-loop-e2e`):
+
+> build → walk → a **reached-but-failing** mission → step-anchored comment → the
+> **5-leg grounded tuple** → codegen **consumes the typed assertion** → re-walk
+> **replays + re-asserts** → the deterministic assertion **flips fail → pass** →
+> promote → it **appears in the run diff** → it's **remembered as a frozen regression
+> test** and re-checked on every later build → **durable across a worker restart**,
+> with **zero LLM on the hot path**.
+
+What's built, each gated by a `scripts/verify-*.ts` script:
+
+| Capability | Where |
+|---|---|
+| One 3-valued verification spine (`checkAssertion`), three entry points (first-walk, re-walk, **regression replay**) | `verify/`, `regression/replay.ts` |
+| Grounded executable feedback — the tuple, codegen that **consumes** it, re-walk that **re-asserts** it | `codegen/`, `rewalk/` |
+| Mechanical re-walk scope (two-bucket touched-routes manifest) + convergence loop with a hard cap | `verify/manifest.ts`, `rewalk/loop.ts` |
+| **Regression memory** — promote → frozen Mission-shaped test, propose-then-approve retirement, run-to-run diff | `regression/`, the worker |
+| **Durable metadata** (`node:sqlite`) — runs/verdicts/comments/regressions survive a restart | `persist/` |
+| **Four-metric dashboard** (det:semantic ≥80%, recompile rate, everything-bucket fraction, attempts histogram) | `metrics/`, the Metrics tab |
+| **Per-lane DB isolation** — stable-slot pool, restore-to-seed runner, the §9.3 gate (primitive + end-to-end) | `walk/`, `runner/app-runner.ts` |
 
 - **[SPEC.md](./SPEC.md)** — what SelfQA is and why it's shaped the way it is.
-- **[PLAN.md](./PLAN.md)** — the 8-week, 8-milestone build path.
+- **[PLAN.md](./PLAN.md)** — the 8-milestone build path (with the as-built status).
 
 ### Running locally
 
@@ -96,26 +116,33 @@ npm run worker                            # long-running worker: codegen + walks
 npm run build && npm run start            # the SelfQA review UI (production)
 
 # open http://localhost:3000 — type a prompt, Build, then Run missions to get the
-# verdict list; click a mission, click a step, and comment to drive an edit.
+# verdict list; click a mission, click a step, and comment to drive an edit. The
+# flip, the run diff, the Promote button, the Metrics tab, and the regression list
+# are all in the review UI.
 ```
 
-Verify each layer without a browser-driver of your own (deterministic, no API key):
+### Verifying
+
+One command runs typecheck + lint + every `verify-*` script:
 
 ```bash
-npx tsx scripts/verify-schema.ts          # the shared assertion/mission schema
-npx tsx scripts/verify-checker.ts         # the one verification checker
-npx tsx scripts/verify-mission-deriver.ts # 8–15 typed missions, cold + informed
-npx tsx scripts/verify-fixtures.ts        # the fixtures contract
-npx tsx scripts/verify-first-walk.ts      # conservative first-walk verdicts
-npx tsx scripts/verify-loop.ts            # build → comment → edit → rebuilt → verified
-npx tsx scripts/verify-isolation-gate.ts  # parallel pool + per-mission isolation (Chromium)
-npx tsx scripts/verify-harness.ts         # selector ladder + settling + retry (Chromium)
-npx tsx scripts/verify-walk.ts            # mission walk + capture (Chromium)
-npx tsx scripts/verify-endpoints.ts       # worker build → walk → artifact → comment
-npx tsx scripts/verify-ui.ts              # the review UI, real browser end-to-end
+npm run verify:fast    # ~20 no-browser checks (deterministic, no API key, seconds)
+npm run verify:all     # the above + real-Chromium / build-driven gates (minutes)
+```
+
+Some headline gates you can run on their own:
+
+```bash
+npx tsx scripts/verify-loop-e2e.ts        # the full win condition, end-to-end (Chromium)
+npx tsx scripts/verify-regression.ts      # frozen replay catches a re-break; no auto-drop
+npx tsx scripts/verify-persist.ts         # sqlite & in-memory stores round-trip identically
+npx tsx scripts/verify-db-e2e.ts          # N parallel lanes, per-lane DB, no "database is locked"
+npx tsx scripts/verify-hot-path.ts        # the re-walk hot path imports zero LLM code
 ```
 
 ## Stack
 
-Next.js · TypeScript · Tailwind · shadcn/ui · Prisma + SQLite (file-per-worker) ·
-Playwright · the Anthropic API (behind a swappable provider interface).
+Next.js 16 · TypeScript · Tailwind · React 19 · Playwright (Chromium) · `node:sqlite`
+for SelfQA's own durable metadata · per-lane SQLite for generated-app data isolation ·
+the Anthropic API (behind a swappable provider interface; a deterministic stub is the
+default).

@@ -8,6 +8,13 @@ it was argued to, not defaulted to. Where a decision reconciles two rules that
 appeared to conflict, the reconciliation is stated so it can't be silently undone
 later.
 
+> **Implementation status:** fully built — all of M1–M6 is implemented and verified
+> (`npm run verify:all`). One deliberate as-built deviation from §5/§9.3: SelfQA's own
+> durable metadata and the DB-backed isolation stub use **`node:sqlite`** (zero
+> engine/network/deps) rather than Prisma; the load-bearing property — a server-side
+> write routed by a **runtime** `DATABASE_URL` to a per-lane file — is identical. See
+> [PLAN.md](./PLAN.md) for the per-milestone gate mapping.
+
 ---
 
 ## 1. Concept
