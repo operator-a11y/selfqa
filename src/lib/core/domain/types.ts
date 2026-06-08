@@ -194,3 +194,28 @@ export interface RunRecord {
   buildSha: string;
   missions: MissionRun[];
 }
+
+/** SPEC §3 — the captured snapshot leg of the tuple (real on-disk artifacts). */
+export interface TupleSnapshot {
+  url: string;
+  domPath: string; // artifact path to the captured DOM html (StepCapture.dom)
+  domHtml: string; // the captured DOM, read from domPath
+  screenshotPath: string; // artifact path to the screenshot (StepCapture.screenshot)
+}
+
+/**
+ * SPEC §3 — the grounded *executable* feedback tuple: every leg exists by
+ * construction (mission id, action-sequence prefix, snapshot, NL, typed
+ * assertion). codegen consumes it; re-walk replays the prefix and re-asserts.
+ */
+export interface GroundedFeedback {
+  id: string;
+  commentId: string;
+  missionId: string;
+  stepIndex?: number;
+  commentType: CommentType;
+  actionSequencePrefix: Action[];
+  snapshot: TupleSnapshot;
+  nl: string;
+  assertion: Assertion;
+}
