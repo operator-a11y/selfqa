@@ -22,6 +22,8 @@ const FAST = [
   "verify-manifest",
   "verify-flip",
   "verify-semantic-verdict",
+  "verify-gate",
+  "verify-converge",
 ];
 const HEAVY = [
   "verify-action-capture",

@@ -156,3 +156,8 @@ export async function diffFiles(
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+/** Revert a hard-blocked edit (SPEC §11.4): reset the working tree to a prior SHA. */
+export async function resetHardTo(dir: string, sha: string): Promise<void> {
+  await exec("git", ["reset", "--hard", sha], { cwd: dir });
+}
