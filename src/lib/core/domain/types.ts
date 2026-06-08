@@ -219,3 +219,12 @@ export interface GroundedFeedback {
   nl: string;
   assertion: Assertion;
 }
+
+/** SPEC §8.3 — the re-walk scope: which missions to re-walk after an edit. */
+export interface RewalkManifest {
+  bucket: "everything" | "local";
+  routes: string[];
+  missionIds: string[];
+  reason: string;
+  everythingBucket: boolean;
+}

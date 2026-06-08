@@ -26,6 +26,7 @@
     "verify:tuple-anchor": "tsx scripts/verify-tuple-anchor.ts",
     "verify:tuple-assemble": "tsx scripts/verify-tuple-assemble.ts",
     "verify:edit-consume": "tsx scripts/verify-edit-consume.ts",
+    "verify:manifest": "tsx scripts/verify-manifest.ts",
     "verify:runner": "tsx scripts/verify-runner.ts",
     "verify:instrument": "tsx scripts/verify-instrument.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",

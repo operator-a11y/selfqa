@@ -31,14 +31,20 @@ export async function runMissions(args: {
   app: GeneratedApp;
   buildSha: string;
   concurrency?: number;
+  /** re-walk scope (SPEC §8.3); absent = walk all (M4 behavior unchanged) */
+  missionIds?: string[];
 }): Promise<RunRecord> {
   const { missions } = await deriveMissions(args.provider, {
     appPrompt: args.app.prompt,
     files: args.app.files,
   });
 
+  const selected = args.missionIds
+    ? missions.filter((m) => args.missionIds!.includes(m.id))
+    : missions;
+
   const plans: MissionPlan[] = [];
-  for (const m of missions) {
+  for (const m of selected) {
     plans.push({
       mission: m,
       actions: await compileSequence(args.provider, m, args.app.files),
