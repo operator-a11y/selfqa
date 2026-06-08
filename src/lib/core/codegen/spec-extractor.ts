@@ -3,41 +3,20 @@
  *
  * Every comment passes through here. It emits the typed assertion (SPEC §6.1)
  * and — when the comment is vague — exactly one clarifying question (then the
- * caller proceeds on best guess). The output is validated with zod so a
- * malformed LLM response is a loud failure, not a silent bad assertion.
+ * caller proceeds on best guess). The output is validated with the SHARED
+ * schema (codegen/schema.ts) so mission criteria and comment assertions can
+ * never drift apart, and a malformed LLM response is a loud failure.
  *
  * Server-intended (drives an LLMProvider).
  */
 import { z } from "zod";
 import type { LLMProvider } from "../provider/types";
 import type { Assertion } from "../domain/types";
+import { AssertionSchema, extractJson } from "./schema";
 import {
   SPEC_EXTRACTOR_SYSTEM_PROMPT,
   specExtractorUserPrompt,
 } from "./prompts";
-
-const PredicateSchema = z.object({
-  kind: z.enum([
-    "http-status",
-    "url-equals",
-    "element-visible",
-    "element-absent",
-    "text-equals",
-    "form-validation-blocks",
-    "console-error-absent",
-  ]),
-  selector: z.string().optional(),
-  expected: z.union([z.string(), z.number()]).optional(),
-});
-
-const AssertionSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("deterministic"),
-    predicate: PredicateSchema,
-    nl: z.string(),
-  }),
-  z.object({ type: z.literal("semantic"), nl: z.string() }),
-]);
 
 const SpecSchema = z.object({
   assertion: AssertionSchema,
@@ -47,16 +26,6 @@ const SpecSchema = z.object({
 export interface ExtractedSpec {
   assertion: Assertion;
   clarifyingQuestion: string | null;
-}
-
-/** Pull the outermost JSON object out of a possibly-chatty response. */
-function extractJson(text: string): string {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error("spec-extractor: no JSON object found in response");
-  }
-  return text.slice(start, end + 1);
 }
 
 export async function extractSpec(
