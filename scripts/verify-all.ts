@@ -24,6 +24,7 @@ const FAST = [
   "verify-semantic-verdict",
   "verify-gate",
   "verify-converge",
+  "verify-persist",
 ];
 const HEAVY = [
   "verify-action-capture",

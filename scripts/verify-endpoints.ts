@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   const PORT = 4400;
   const base = `http://127.0.0.1:${PORT}`;
   const worker = spawn("npx", ["tsx", "worker/index.ts"], {
-    env: { ...process.env, SELFQA_WORKER_PORT: String(PORT) },
+    env: { ...process.env, SELFQA_WORKER_PORT: String(PORT), SELFQA_STORE: "memory" },
     stdio: ["ignore", "inherit", "inherit"],
     detached: true,
   });

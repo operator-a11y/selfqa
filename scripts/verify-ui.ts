@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   await exec("npm", ["run", "build"], { cwd: process.cwd(), maxBuffer: 1 << 26 });
 
   const worker = spawn("npx", ["tsx", "worker/index.ts"], {
-    env: { ...process.env, SELFQA_WORKER_PORT: "4317" },
+    env: { ...process.env, SELFQA_WORKER_PORT: "4317", SELFQA_STORE: "memory" },
     detached: true,
     stdio: ["ignore", "inherit", "inherit"],
   });

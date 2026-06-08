@@ -11,9 +11,11 @@
  *   POST /api/comment   { appId, missionId?, stepIndex?, url?, domPath?, nl }
  *                                             -> trace-anchored edit + rebuild
  *
- * Run persistence is in-memory for M3–M4 (durable SQLite arrives in M5 with the
- * run-to-run diff). The executable half of the tuple (codegen consuming the typed
- * assertion + re-asserting on re-walk) is M5 per SPEC §10.5.
+ * Metadata persistence is durable as of M5-K: apps, runs, verdicts (keyed by
+ * (missionId, buildSha)), the grounded-feedback tuples, and the human-approved
+ * regression registry are written through the MetadataStore seam (node:sqlite,
+ * ./selfqa.db) and survive a restart. The repo, app subprocess, and browser are
+ * process-local handles (held in `apps`) and intentionally do NOT persist.
  */
 import http from "node:http";
 import { promises as fs } from "node:fs";
@@ -42,11 +44,16 @@ import { classifyDiff, selectRewalkSet } from "../src/lib/core/verify/manifest";
 import { planReWalk } from "../src/lib/core/rewalk/plan";
 import { reWalk } from "../src/lib/core/rewalk/run-rewalk";
 import { computeRunDiff } from "../src/lib/core/regression/diff";
+import { makeMetadataStore } from "../src/lib/core/persist/factory";
 import type { CommentType, RunRecord } from "../src/lib/core/domain/types";
 
 const PORT = Number(process.env.SELFQA_WORKER_PORT ?? 4317);
 const provider = getProvider();
 const iso = new ClientContextIsolation();
+// Durable metadata (SPEC §11.1, M5-K): apps/runs/verdicts/comments/regressions
+// survive a restart. The repo, subprocess, and browser handles below stay
+// process-local (they cannot be serialized) — only metadata crosses the seam.
+const store = makeMetadataStore();
 
 interface BuiltApp {
   appId: string;
@@ -112,6 +119,7 @@ const server = http.createServer(async (req, res) => {
       const running = await startApp(repo.dir, { id: appId });
       const sha = await currentSha(repo.dir);
       apps.set(appId, { appId, repo, app: generated, running });
+      store.saveApp({ appId, prompt, createdSha: sha });
       console.log(`[worker] build ${appId} ready at ${running.url} (sha ${sha})`);
       return sendJson(res, 200, { appId, url: running.url, sha });
     }
@@ -135,13 +143,16 @@ const server = http.createServer(async (req, res) => {
         buildSha,
       });
       runs.set(appId, run);
+      store.saveRun(run);
       console.log(`[worker] walk ${appId}: ${run.missions.length} missions`);
       return sendJson(res, 200, run);
     }
 
     if (req.method === "GET" && pathname === "/api/missions") {
       const appId = url.searchParams.get("appId") ?? "";
-      const run = runs.get(appId);
+      // In-memory live copy first; fall back to the durable store so review
+      // survives a worker restart even when the app subprocess is gone (M5-K).
+      const run = runs.get(appId) ?? store.getRun(appId) ?? undefined;
       if (!run) return sendJson(res, 404, { error: "no run for appId" });
       return sendJson(res, 200, run);
     }
@@ -179,6 +190,7 @@ const server = http.createServer(async (req, res) => {
       // 1. compile the comment to the full grounded tuple (off the trace, never inferred)
       const tuple = await assembleTuple(provider, { trace: mr.trace, stepIndex, nl, commentType });
       if (!tuple.ok) return sendJson(res, 200, { route: "needs-human", reason: tuple.reason });
+      store.saveComment(tuple.feedback, appId); // the grounded tuple is durable (SPEC §3, M5-K)
 
       // 2. codegen CONSUMES the tuple -> edit -> commit -> rebuild
       const shaBefore = await currentSha(built.repo.dir);
@@ -208,7 +220,9 @@ const server = http.createServer(async (req, res) => {
         return u ? { ...u, regressionPromoted: m.regressionPromoted, retirementProposed: m.retirementProposed } : m;
       });
       next.sort((a, b) => rankVerdict(a.verdict.status) - rankVerdict(b.verdict.status));
-      runs.set(appId, { appId, buildSha: shaAfter, missions: next });
+      const nextRun: RunRecord = { appId, buildSha: shaAfter, missions: next };
+      runs.set(appId, nextRun);
+      store.saveRun(nextRun, shaBefore); // new build's verdicts are durable; parent = pre-edit sha
       const diff = computeRunDiff(prior, next);
       const flip = record.outcomes[0];
       console.log(`[worker] comment ${appId}/${missionId} -> ${flip?.assertionResult} (sha ${shaAfter.slice(0, 10)})`);
@@ -229,9 +243,11 @@ const server = http.createServer(async (req, res) => {
       const run = runs.get(String(body.appId ?? ""));
       const mr = run?.missions.find((m) => m.mission.id === String(body.missionId ?? ""));
       if (!run || !mr) return sendJson(res, 404, { error: "unknown mission/run" });
-      // Human approval mints a permanent regression test (§7.5).
+      // Human approval mints a permanent regression test (§7.5) — durable (M5-K).
       mr.regressionPromoted = true;
       mr.retirementProposed = undefined;
+      store.promoteRegressionTest(run.appId, mr.mission.id);
+      store.saveRun(run); // persist the per-run promotion flag too
       return sendJson(res, 200, { ok: true, missionId: mr.mission.id, regressionPromoted: true });
     }
 
@@ -244,9 +260,13 @@ const server = http.createServer(async (req, res) => {
         // human-approved retirement only — never an auto-drop (P1).
         mr.regressionPromoted = false;
         mr.retirementProposed = undefined;
+        store.approveRetirement(run.appId, mr.mission.id);
+        store.saveRun(run);
         return sendJson(res, 200, { ok: true, retired: true });
       }
       mr.retirementProposed = { reason: String(body.reason ?? "proposed") };
+      store.proposeRetirement(run.appId, mr.mission.id, mr.retirementProposed.reason);
+      store.saveRun(run);
       return sendJson(res, 200, { ok: true, retirementProposed: mr.retirementProposed });
     }
 
@@ -265,9 +285,14 @@ server.listen(PORT, "127.0.0.1", () => {
 
 function shutdown(signal: string): void {
   console.log(`[selfqa-worker] ${signal} — stopping ${apps.size} app(s)`);
-  void Promise.allSettled([stopAll(), closeBrowser()]).finally(() =>
-    process.exit(0),
-  );
+  void Promise.allSettled([stopAll(), closeBrowser()]).finally(() => {
+    try {
+      store.close();
+    } catch {
+      /* already closed */
+    }
+    process.exit(0);
+  });
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
