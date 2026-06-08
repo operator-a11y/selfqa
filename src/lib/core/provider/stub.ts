@@ -209,9 +209,43 @@ export class StubProvider implements LLMProvider {
       };
     }
 
-    // edit-agent and spec-extractor canned responses arrive in Checkpoint D.
+    if (system.includes("edit-agent")) {
+      // Deterministic, visible change: flip the todo title text.
+      const page = CANNED_TODO_APP.find((f) => f.path === "src/app/page.tsx");
+      const edited = page
+        ? page.content.replace(
+            "        Todo\n",
+            "        Todo (edited by SelfQA)\n",
+          )
+        : "";
+      return {
+        text: serializeFileBlocks(
+          page ? [{ path: "src/app/page.tsx", content: edited }] : [],
+        ),
+        stopReason: "end_turn",
+      };
+    }
+
+    if (system.includes("spec-extractor")) {
+      return {
+        text: JSON.stringify({
+          assertion: {
+            type: "deterministic",
+            predicate: {
+              kind: "text-equals",
+              selector: "[data-testid=title]",
+              expected: "Todo (edited by SelfQA)",
+            },
+            nl: "the title should indicate it was edited",
+          },
+          clarifyingQuestion: null,
+        }),
+        stopReason: "end_turn",
+      };
+    }
+
     throw new Error(
-      `StubProvider: no canned response for this request (system marker not recognized)`,
+      "StubProvider: no canned response for this request (system marker not recognized)",
     );
   }
 }

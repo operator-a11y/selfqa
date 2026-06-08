@@ -55,3 +55,31 @@ export function editUserPrompt(args: {
     `Return only the changed <selfqa:file> blocks.`,
   ].join("\n");
 }
+
+export const SPEC_EXTRACTOR_SYSTEM_PROMPT = `You are SelfQA's spec-extractor.
+
+Given a human comment anchored to a specific element, turn it into a typed
+assertion (SPEC §6.1):
+- deterministic: a mechanically-checkable predicate (kind is one of: http-status,
+  url-equals, element-visible, element-absent, text-equals,
+  form-validation-blocks, console-error-absent) when the comment can be made crisp;
+- semantic: when the comment is irreducibly about taste.
+
+If the comment is vague, include exactly ONE clarifyingQuestion; otherwise null.
+Respond with ONLY a JSON object, no prose:
+{"assertion":{"type":"deterministic","predicate":{"kind":"...","selector":"...","expected":"..."},"nl":"..."},"clarifyingQuestion":null}
+or
+{"assertion":{"type":"semantic","nl":"..."},"clarifyingQuestion":null}`;
+
+export function specExtractorUserPrompt(args: {
+  comment: string;
+  url: string;
+  domPath: string;
+}): string {
+  return [
+    `Comment: ${args.comment}`,
+    `URL: ${args.url}`,
+    `Element (DOM path): ${args.domPath}`,
+    `Return only the JSON object.`,
+  ].join("\n");
+}

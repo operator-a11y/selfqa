@@ -4,12 +4,14 @@
  * Owns codegen (via the swappable LLMProvider) and the lifecycle of
  * generated-app subprocesses. The Next UI proxies to this HTTP API; none of
  * this fits Next's request/response model. SSE progress + the full re-walk
- * engine arrive in later milestones; M1 keeps it to build (+ comment in D).
+ * engine arrive in later milestones.
  */
 import http from "node:http";
 import { getProvider } from "../src/lib/core/provider/factory";
 import { buildApp, type GeneratedApp } from "../src/lib/core/codegen/build-agent";
 import { instrument } from "../src/lib/core/instrument/inject";
+import { extractSpec } from "../src/lib/core/codegen/spec-extractor";
+import { editApp } from "../src/lib/core/codegen/edit-agent";
 import {
   writeGeneratedApp,
   currentSha,
@@ -81,18 +83,40 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && req.url === "/api/comment") {
-      // Checkpoint D: spec-extractor → edit-agent → reload.
-      return sendJson(res, 501, {
-        error: "the comment→edit loop arrives in Checkpoint D",
+      const body = await readJson(req);
+      const appId = String(body.appId ?? "");
+      const built = apps.get(appId);
+      if (!built) return sendJson(res, 404, { error: "unknown appId" });
+
+      const nl = String(body.nl ?? "");
+      const url = String(body.url ?? built.running.url);
+      const domPath = String(body.domPath ?? "");
+
+      // spec-extractor (typed assertion + optional one clarifying question),
+      // then the localized edit (a new commit) — see SPEC §10.4 / §8.2.
+      const spec = await extractSpec(provider, { comment: nl, url, domPath });
+      const edit = await editApp(provider, {
+        dir: built.repo.dir,
+        comment: nl,
+        url,
+        domPath,
+      });
+      console.log(
+        `[worker] comment on ${appId} -> edit ${edit.sha} (${edit.changed.join(", ")})`,
+      );
+      // `next dev` Fast-Refresh picks up the file change; the UI reloads the iframe.
+      return sendJson(res, 200, {
+        sha: edit.sha,
+        changed: edit.changed,
+        assertion: spec.assertion,
+        clarifyingQuestion: spec.clarifyingQuestion,
       });
     }
 
     sendJson(res, 404, { error: "not found" });
   } catch (e) {
     console.error("[worker] error:", e);
-    sendJson(res, 500, {
-      error: e instanceof Error ? e.message : String(e),
-    });
+    sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
   }
 });
 

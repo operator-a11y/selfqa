@@ -110,3 +110,12 @@ export async function readFiles(
   }
   return out;
 }
+
+/** Git-tracked files in a generated app (excludes node_modules/.next via .gitignore). */
+export async function listTrackedFiles(dir: string): Promise<string[]> {
+  const { stdout } = await exec("git", ["ls-files"], { cwd: dir });
+  return stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
