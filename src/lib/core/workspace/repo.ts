@@ -11,6 +11,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { GeneratedFile } from "../codegen/protocol";
 import { isSafeRelativePath } from "../codegen/protocol";
+import {
+  FIXTURES_FILENAME,
+  parseFixturesManifest,
+  type FixturesManifest,
+} from "../codegen/fixtures";
 
 const exec = promisify(execFile);
 
@@ -118,4 +123,18 @@ export async function listTrackedFiles(dir: string): Promise<string[]> {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/**
+ * Load + validate the app's fixtures manifest (SPEC §12). Absent file -> default
+ * empty manifest; present-but-malformed -> loud throw (never a silent bad fixture).
+ */
+export async function loadFixtures(dir: string): Promise<FixturesManifest> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(path.join(dir, FIXTURES_FILENAME), "utf8");
+  } catch {
+    return parseFixturesManifest({});
+  }
+  return parseFixturesManifest(JSON.parse(raw));
 }

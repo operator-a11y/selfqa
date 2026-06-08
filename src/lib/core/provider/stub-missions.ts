@@ -45,7 +45,15 @@ export const STUB_COLD_MISSIONS = {
       name: "Submit an empty todo",
       description: "Click Add with an empty input.",
       intendedSteps: ["leave the input empty", "click Add"],
-      acceptanceCriteria: [noConsoleErrors, staysOnRoot],
+      acceptanceCriteria: [
+        noConsoleErrors,
+        staysOnRoot,
+        det(
+          "element-visible",
+          { selector: "[data-testid=error]" },
+          "an error message is shown on empty submit",
+        ),
+      ],
     },
     {
       id: "mission-add-remove",

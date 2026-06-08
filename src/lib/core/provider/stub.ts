@@ -135,11 +135,16 @@ export default function Home() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [text, setText] = useState("");
   const [nextId, setNextId] = useState(1);
+  const [error, setError] = useState("");
 
   function addTodo(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setError("Please enter a task");
+      return;
+    }
+    setError("");
     setTodos((prev) => [...prev, { id: nextId, text: trimmed }]);
     setNextId((n) => n + 1);
     setText("");
@@ -170,6 +175,11 @@ export default function Home() {
           Add
         </button>
       </form>
+      {error ? (
+        <p role="alert" data-testid="error" className="mb-2 text-sm text-red-600">
+          {error}
+        </p>
+      ) : null}
       <p className="mb-2 text-sm text-gray-500" data-testid="count">
         {todos.length} item(s)
       </p>
@@ -193,6 +203,17 @@ export default function Home() {
       </ul>
     </main>
   );
+}`,
+  },
+  {
+    path: "selfqa.fixtures.json",
+    content: `{
+  "seedUsers": [],
+  "loginHook": { "kind": "none", "note": "client-state todo app: no auth" },
+  "mockKeys": {},
+  "stubbedEmailOtp": false,
+  "seedData": [],
+  "snapshotRestore": { "kind": "none", "note": "client-state app; DB restore lands with Prisma in M5" }
 }`,
   },
 ];
