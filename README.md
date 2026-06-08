@@ -68,10 +68,34 @@ apps.
 
 ## Status
 
-Early. This repository currently contains the design:
+**M1 (prove the loop) is implemented and verified** — build → explore → comment →
+spec-extract → edit → re-verify, end-to-end. By default it runs on a deterministic
+**stub** provider (no API key, no token spend); set `ANTHROPIC_API_KEY` to switch to
+real codegen — the provider is swappable behind one interface (SPEC §15).
 
 - **[SPEC.md](./SPEC.md)** — what SelfQA is and why it's shaped the way it is.
 - **[PLAN.md](./PLAN.md)** — the 8-week, 8-milestone build path.
+
+### Running locally (M1)
+
+```bash
+npm install
+# optional — real codegen instead of the deterministic stub:
+cp .env.example .env && echo "ANTHROPIC_API_KEY=sk-..." >> .env
+
+# two processes (SPEC §14.1):
+npm run worker     # long-running worker: codegen + generated-app subprocesses
+npm run dev        # the SelfQA review UI
+
+# open http://localhost:3000 — type a prompt, Build, then toggle Comment mode,
+# click an element, and submit a comment to drive an edit.
+```
+
+Verify the loop without a browser (deterministic, no API key):
+
+```bash
+npx tsx scripts/verify-loop.ts   # build → comment → edit → reflected in <60s
+```
 
 ## Stack
 
