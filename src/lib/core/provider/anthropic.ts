@@ -36,10 +36,13 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async complete(req: LLMCompletionRequest): Promise<LLMCompletionResult> {
+    // `temperature` is DEPRECATED on current Claude models (Opus 4.8+ reject it
+    // with a 400), so we don't forward it — callers pass temperature:0 for
+    // determinism, which these models approximate without the knob. An older model
+    // that still accepts it could be handled behind a model check if ever needed.
     const res = await this.client.messages.create({
       model: req.model ?? this.defaultModel,
       max_tokens: req.maxTokens ?? 8192,
-      temperature: req.temperature ?? 0,
       ...(req.system ? { system: req.system } : {}),
       messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
     });
