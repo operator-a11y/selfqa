@@ -133,6 +133,7 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [flip, setFlip] = useState<FlipT | null>(null);
   const [diff, setDiff] = useState<DiffT | null>(null);
+  const [commentNotice, setCommentNotice] = useState<string | null>(null);
   const [regressions, setRegressions] = useState<RegressionT[]>([]);
 
   // explore (iframe) state — M1 flow
@@ -283,6 +284,7 @@ export default function Home() {
     setStatus("Comment → tuple → edit → rebuild → re-walk…");
     setFlip(null);
     setDiff(null);
+    setCommentNotice(null);
     setSubmitting(true);
     try {
       const res = await fetch("/api/comment", {
@@ -293,7 +295,16 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "comment failed");
       if (data.route === "needs-human") {
-        setStatus(`Couldn't ground this comment (${data.reason}) → needs-human.`);
+        const msg = `Couldn't ground this comment (${data.reason}) → needs-human.`;
+        setStatus(msg);
+        setCommentNotice(msg);
+        return;
+      }
+      if (data.noChange) {
+        // the edit produced no code change (e.g. the stub can't add a feature) —
+        // say so plainly instead of pretending a re-walk happened.
+        setStatus("No code change was made for this comment.");
+        setCommentNotice(data.message ?? "The agent made no code change for this comment.");
         return;
       }
       const newUrl: string = data.url ?? app.url;
@@ -613,6 +624,7 @@ export default function Home() {
                         setAnchor(null);
                         setFlip(null);
                         setDiff(null);
+                        setCommentNotice(null);
                       }}
                       className={`flex w-full flex-col items-start gap-1 border-b px-3 py-2 text-left text-sm hover:bg-gray-50 ${selectedMission === m.mission.id ? "bg-indigo-50" : ""}`}
                       data-testid="mission-row"
@@ -636,7 +648,7 @@ export default function Home() {
                     <p className="text-sm text-gray-600">{selected.mission.description}</p>
                     <div className="flex gap-2 text-xs">
                       <button
-                        onClick={() => { setAnchor({ missionId: selected.mission.id }); setFlip(null); setDiff(null); }}
+                        onClick={() => { setAnchor({ missionId: selected.mission.id }); setFlip(null); setDiff(null); setCommentNotice(null); }}
                         className="rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 px-2 py-1"
                         data-testid="comment-mission"
                       >
@@ -661,7 +673,7 @@ export default function Home() {
                       {selected.trace.steps.map((s) => (
                         <button
                           key={s.index}
-                          onClick={() => { setAnchor({ missionId: selected.mission.id, stepIndex: s.index }); setFlip(null); setDiff(null); }}
+                          onClick={() => { setAnchor({ missionId: selected.mission.id, stepIndex: s.index }); setFlip(null); setDiff(null); setCommentNotice(null); }}
                           className={`flex flex-col gap-1 rounded border p-1 text-left text-xs hover:border-indigo-400 ${anchor?.stepIndex === s.index && anchor?.missionId === selected.mission.id ? "border-indigo-500" : ""}`}
                           data-testid="step-thumb"
                         >
@@ -712,6 +724,11 @@ export default function Home() {
                               {flip.assertionResult === "flipped" ? "✓ assertion flipped — verdict now passes" : `re-walk outcome: ${flip.assertionResult}`}
                             </div>
                             {flip.detail && <div className="opacity-80">{flip.detail}</div>}
+                          </div>
+                        )}
+                        {!submitting && !flip && commentNotice && (
+                          <div className="rounded bg-amber-100 p-2 text-xs text-amber-900" data-testid="comment-notice">
+                            {commentNotice}
                           </div>
                         )}
                       </div>

@@ -121,6 +121,16 @@ async function main(): Promise<void> {
       cmt.flip?.assertionResult === "flipped" && cmt.flip?.verdict?.status === "pass",
     );
 
+    // Regression: a comment whose edit changes NOTHING (re-send the same one) must
+    // return a graceful no-change, NOT crash on an empty `git commit`.
+    const noop = await fetch(base + "/api/comment", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appId: build.appId, missionId: target.mission.id, stepIndex, nl: "the title should indicate it was edited", commentType: "step-anchored" }),
+    });
+    const noopBody = await noop.json();
+    truthy("/api/comment: a no-op edit returns 200 + noChange (no empty-commit crash)", noop.status === 200 && noopBody.ok === true && noopBody.noChange === true && !noopBody.error);
+
     const prom = await (
       await fetch(base + "/api/promote", {
         method: "POST",

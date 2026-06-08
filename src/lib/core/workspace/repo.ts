@@ -73,9 +73,17 @@ async function gitInitialCommit(dir: string, message: string): Promise<void> {
   );
 }
 
-/** Stage all changes and commit; returns the new SHA (used by the edit-agent). */
+/**
+ * Stage all changes and commit; returns the new SHA (used by the edit-agent).
+ * EMPTY-SAFE: if the edit produced no actual change, `git commit` would exit
+ * non-zero ("nothing to commit"); instead we skip the commit and return the
+ * unchanged SHA, so a no-op edit is a normal outcome the caller can detect
+ * (shaAfter === shaBefore), not a crash.
+ */
 export async function commitAll(dir: string, message: string): Promise<string> {
   await exec("git", ["add", "-A"], { cwd: dir });
+  const { stdout: status } = await exec("git", ["status", "--porcelain"], { cwd: dir });
+  if (status.trim() === "") return currentSha(dir); // no-op edit: nothing to commit
   await exec(
     "git",
     [

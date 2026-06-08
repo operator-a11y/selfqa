@@ -39,6 +39,7 @@
     "verify:regression": "tsx scripts/verify-regression.ts",
     "verify:db-isolation": "tsx scripts/verify-db-isolation.ts",
     "verify:coverage": "tsx scripts/verify-coverage.ts",
+    "verify:commit-safe": "tsx scripts/verify-commit-safe.ts",
     "verify:runner": "tsx scripts/verify-runner.ts",
     "verify:instrument": "tsx scripts/verify-instrument.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",

@@ -262,9 +262,27 @@ const server = http.createServer(async (req, res) => {
       // 2. codegen CONSUMES the tuple -> edit -> commit -> rebuild
       const shaBefore = await currentSha(built.repo.dir);
       await editFromTuples(provider, { dir: built.repo.dir, feedback: [tuple.feedback] });
+      const shaAfter = await currentSha(built.repo.dir);
+
+      // No-op edit: codegen produced no code change for this comment (commitAll is
+      // empty-safe, so shaAfter === shaBefore). Skip the expensive rebuild + re-walk
+      // and tell the user plainly — never crash on an empty commit.
+      if (shaAfter === shaBefore) {
+        console.log(`[worker] comment ${appId}/${missionId} -> no code change`);
+        return sendJson(res, 200, {
+          ok: true,
+          noChange: true,
+          sha: shaAfter,
+          commentAssertion: tuple.feedback.assertion,
+          message:
+            provider.name === "stub"
+              ? "The agent made no code change for this comment. The stub provider only applies the canned deterministic edit (it can't implement new features like adding a button) — set ANTHROPIC_API_KEY for real codegen."
+              : "The agent made no code change for this comment.",
+        });
+      }
+
       const rebuilt = await rebuildApp(built.running);
       built.running = rebuilt;
-      const shaAfter = await currentSha(built.repo.dir);
 
       // 3. mechanical re-walk scope from the git diff (never editApp.changed, P1)
       const changed = await diffFiles(built.repo.dir, shaBefore, shaAfter);
