@@ -131,3 +131,37 @@ export interface Comment {
   actionSequence?: Action[]; // M5: deterministic steps to reach the state
   assertion?: Assertion; // M5: emitted by the spec-extractor (SPEC §10.4)
 }
+
+// ── Walk artifacts (additive; existing types above are frozen) ───────────────
+
+/** SPEC §14.5 — a captured artifact reference; bytes live on disk, metadata holds the path. */
+export interface CaptureRef {
+  kind: "screenshot" | "dom" | "video";
+  path: string;
+}
+
+/** One captured step of a mission walk (SPEC §7, §14.5). */
+export interface StepCapture {
+  index: number;
+  actionKind: ActionKind;
+  url: string;
+  screenshot: string; // artifact path
+  dom: string; // artifact path (serialized HTML)
+}
+
+/**
+ * A mission's walk trace. The compiled Action[] is a build-specific cache, NOT
+ * identity (SPEC §7.4). `entryRoute` is the mechanical mission->route signal the
+ * M5 touched-routes manifest builds on.
+ */
+export interface MissionTrace {
+  missionId: string;
+  reached: boolean; // did replay reach the terminal state?
+  attempts: number;
+  entryRoute: string;
+  steps: StepCapture[];
+  video?: string; // artifact path
+  terminalUrl: string;
+  httpStatus?: number;
+  consoleErrors: string[];
+}

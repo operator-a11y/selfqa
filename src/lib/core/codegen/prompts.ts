@@ -140,3 +140,39 @@ export function missionDeriverUserPrompt(args: {
   lines.push(``, `Return ONLY the JSON {"missions":[...],"reusedIds":[...]}.`);
   return lines.join("\n");
 }
+
+export const MISSION_COMPILER_SYSTEM_PROMPT = `selfqa-role: mission-compiler
+You are SelfQA's mission-compiler.
+
+Compile a mission's natural-language intendedSteps into a deterministic Action[]
+the harness can replay. Each action:
+{ "kind": "navigate"|"click"|"type"|"press"|"select"|"wait",
+  "target"?: { "strategy": "data-testid"|"role+name"|"text"|"xpath", "value": "...", "fallbacks"?: [{ "strategy": "...", "value": "..." }] },
+  "value"?: "text to type / key to press / url / option" }
+
+Rules:
+- Prefer data-testid targets (top of the selector ladder).
+- For list items, emit an UNAMBIGUOUS target (indexed/scoped) — never one that
+  matches many elements.
+- Do NOT include the initial page load — the walker navigates first.
+- Output ONLY JSON: {"actions":[...]}. No prose, no fences.`;
+
+export function missionCompilerUserPrompt(
+  mission: Mission,
+  files: GeneratedFile[],
+): string {
+  const fileList = files
+    .map((f) => `--- ${f.path} ---\n${f.content}`)
+    .join("\n\n");
+  return [
+    `Mission id: ${mission.id}`,
+    `Mission: ${mission.name} — ${mission.description}`,
+    `Intended steps:`,
+    ...mission.intendedSteps.map((s, i) => `  ${i + 1}. ${s}`),
+    ``,
+    `Code:`,
+    fileList,
+    ``,
+    `Return ONLY {"actions":[...]}.`,
+  ].join("\n");
+}

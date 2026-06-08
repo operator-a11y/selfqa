@@ -16,7 +16,11 @@ import type {
   LLMCompletionResult,
 } from "./types";
 import { serializeFileBlocks, type GeneratedFile } from "../codegen/protocol";
-import { STUB_COLD_MISSIONS, STUB_INFORMED_MISSIONS } from "./stub-missions";
+import {
+  STUB_COLD_MISSIONS,
+  STUB_INFORMED_MISSIONS,
+  STUB_COMPILED_SEQUENCES,
+} from "./stub-missions";
 
 /** A tiny but real Next.js + Tailwind todo app — something with a form to comment on. */
 const CANNED_TODO_APP: GeneratedFile[] = [
@@ -277,6 +281,15 @@ export class StubProvider implements LLMProvider {
         text: JSON.stringify(
           informed ? STUB_INFORMED_MISSIONS : STUB_COLD_MISSIONS,
         ),
+        stopReason: "end_turn",
+      };
+    }
+
+    if (role === "mission-compiler") {
+      const m = userText.match(/Mission id:\s*(\S+)/);
+      const id = m ? m[1] : "";
+      return {
+        text: JSON.stringify({ actions: STUB_COMPILED_SEQUENCES[id] ?? [] }),
         stopReason: "end_turn",
       };
     }

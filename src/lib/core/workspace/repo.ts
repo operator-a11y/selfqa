@@ -138,3 +138,21 @@ export async function loadFixtures(dir: string): Promise<FixturesManifest> {
   }
   return parseFixturesManifest(JSON.parse(raw));
 }
+
+/**
+ * Mechanical git file-diff between two builds (SPEC §8.3 foundation). The M5
+ * touched-routes manifest's import-graph closure builds on this primitive.
+ */
+export async function diffFiles(
+  dir: string,
+  shaA: string,
+  shaB: string,
+): Promise<string[]> {
+  const { stdout } = await exec("git", ["diff", "--name-only", shaA, shaB], {
+    cwd: dir,
+  });
+  return stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}

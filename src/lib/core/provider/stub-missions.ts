@@ -10,6 +10,8 @@
  * they are honestly counted semantic AND honestly ambiguous on first walk.
  */
 
+import type { Action } from "../domain/types";
+
 const det = (kind: string, extra: Record<string, unknown>, nl: string) => ({
   type: "deterministic" as const,
   predicate: { kind, ...extra },
@@ -128,4 +130,43 @@ export const STUB_INFORMED_MISSIONS = {
     },
   ],
   reusedIds: STUB_COLD_MISSIONS.missions.map((m) => m.id),
+};
+
+const testid = (value: string) => ({ strategy: "data-testid" as const, value });
+
+/** Canned compiled Action[] per mission id (the mission-compiler's stub output). */
+export const STUB_COMPILED_SEQUENCES: Record<string, Action[]> = {
+  "mission-page-loads": [],
+  "mission-add-todo": [
+    { kind: "type", target: testid("todo-input"), value: "buy milk" },
+    { kind: "click", target: testid("add-button") },
+  ],
+  "mission-add-empty": [{ kind: "click", target: testid("add-button") }],
+  "mission-add-remove": [
+    { kind: "type", target: testid("todo-input"), value: "task" },
+    { kind: "click", target: testid("add-button") },
+    { kind: "click", target: testid("remove-button") },
+  ],
+  "mission-add-multiple": [
+    { kind: "type", target: testid("todo-input"), value: "a" },
+    { kind: "click", target: testid("add-button") },
+    { kind: "type", target: testid("todo-input"), value: "b" },
+    { kind: "click", target: testid("add-button") },
+    { kind: "type", target: testid("todo-input"), value: "c" },
+    { kind: "click", target: testid("add-button") },
+  ],
+  "mission-long-input": [
+    { kind: "type", target: testid("todo-input"), value: "x".repeat(300) },
+    { kind: "click", target: testid("add-button") },
+  ],
+  "mission-whitespace-input": [
+    { kind: "type", target: testid("todo-input"), value: "   " },
+    { kind: "click", target: testid("add-button") },
+  ],
+  "mission-rapid-duplicate": [
+    { kind: "type", target: testid("todo-input"), value: "dup" },
+    { kind: "click", target: testid("add-button") },
+    { kind: "type", target: testid("todo-input"), value: "dup" },
+    { kind: "click", target: testid("add-button") },
+  ],
 };
