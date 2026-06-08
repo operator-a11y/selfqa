@@ -323,6 +323,24 @@ export class StubProvider implements LLMProvider {
       };
     }
 
+    if (role === "semantic-verdict") {
+      // Deterministic stub: satisfied iff after differs from before; low confidence
+      // iff the after snapshot carries the "UNSURE" marker.
+      const m = userText.match(/SELFQA-SEM-ITEMS-START\n([\s\S]*?)\nSELFQA-SEM-ITEMS-END/);
+      let items: { commentId: string; beforeSnapshot?: string; afterSnapshot?: string }[] = [];
+      try {
+        items = m ? JSON.parse(m[1]) : [];
+      } catch {
+        items = [];
+      }
+      const verdicts = items.map((it) => ({
+        commentId: it.commentId,
+        satisfied: (it.afterSnapshot ?? "") !== (it.beforeSnapshot ?? ""),
+        confidence: String(it.afterSnapshot ?? "").includes("UNSURE") ? "low" : "high",
+      }));
+      return { text: JSON.stringify({ verdicts }), stopReason: "end_turn" };
+    }
+
     throw new Error(
       "StubProvider: unrecognized role " +
         JSON.stringify(role) +

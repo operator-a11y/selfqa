@@ -252,3 +252,20 @@ export function editFromTuplesUserPrompt(args: {
     "Return only the changed <selfqa:file> blocks.",
   ].join("\n");
 }
+
+export const SEMANTIC_VERDICT_SYSTEM_PROMPT = `selfqa-role: semantic-verdict
+You are SelfQA's semantic-verdict judge (SPEC §6.1). For each comment, decide
+whether its intent is satisfied by comparing the BEFORE and AFTER snapshots, with a
+confidence. Output ONLY {"verdicts":[{"commentId":"...","satisfied":true|false|null,"confidence":"high"|"low"}]}.`;
+
+export function semanticVerdictUserPrompt(
+  items: { commentId: string; nl: string; beforeSnapshot: string; afterSnapshot: string }[],
+): string {
+  return [
+    "Judge each comment's intent (satisfied true/false/null + confidence high/low).",
+    "SELFQA-SEM-ITEMS-START",
+    JSON.stringify(items),
+    "SELFQA-SEM-ITEMS-END",
+    'Return ONLY {"verdicts":[...]}.',
+  ].join("\n");
+}
