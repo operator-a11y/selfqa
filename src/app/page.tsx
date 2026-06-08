@@ -130,6 +130,7 @@ export default function Home() {
   const [selectedMission, setSelectedMission] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<{ missionId: string; stepIndex?: number } | null>(null);
   const [commentText, setCommentText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [flip, setFlip] = useState<FlipT | null>(null);
   const [diff, setDiff] = useState<DiffT | null>(null);
   const [regressions, setRegressions] = useState<RegressionT[]>([]);
@@ -282,6 +283,7 @@ export default function Home() {
     setStatus("Comment → tuple → edit → rebuild → re-walk…");
     setFlip(null);
     setDiff(null);
+    setSubmitting(true);
     try {
       const res = await fetch("/api/comment", {
         method: "POST",
@@ -303,15 +305,18 @@ export default function Home() {
           ? "✓ assertion flipped fail→pass"
           : `re-walk outcome: ${data.flip?.assertionResult ?? "done"}`,
       );
-      setAnchor(null);
-      setTarget(null);
+      // keep the anchor/composer mounted so the result shows INLINE where you clicked;
+      // just clear the text. (Pick another step/mission to dismiss it.)
       setCommentText("");
+      setTarget(null);
       if (iframeRef.current) iframeRef.current.src = `${newUrl}?t=${Date.now()}`;
       await refreshMissions();
       void fetchMetrics();
       void fetchRegressions();
     } catch (e) {
       setStatus(`Comment: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -337,14 +342,14 @@ export default function Home() {
           <div className="flex gap-1 text-sm">
             <button
               onClick={() => setTab("review")}
-              className={`rounded px-3 py-1.5 ${tab === "review" ? "bg-black text-white" : "bg-gray-200"}`}
+              className={`rounded px-3 py-1.5 ${tab === "review" ? "bg-black text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
               data-testid="tab-review"
             >
               Review
             </button>
             <button
               onClick={() => setTab("explore")}
-              className={`rounded px-3 py-1.5 ${tab === "explore" ? "bg-black text-white" : "bg-gray-200"}`}
+              className={`rounded px-3 py-1.5 ${tab === "explore" ? "bg-black text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
               data-testid="tab-explore"
             >
               Explore
@@ -354,7 +359,7 @@ export default function Home() {
                 setTab("metrics");
                 void fetchMetrics();
               }}
-              className={`rounded px-3 py-1.5 ${tab === "metrics" ? "bg-black text-white" : "bg-gray-200"}`}
+              className={`rounded px-3 py-1.5 ${tab === "metrics" ? "bg-black text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
               data-testid="tab-metrics"
             >
               Metrics
@@ -364,7 +369,7 @@ export default function Home() {
                 setTab("coverage");
                 if (!coverage) void fetchCoverage();
               }}
-              className={`rounded px-3 py-1.5 ${tab === "coverage" ? "bg-black text-white" : "bg-gray-200"}`}
+              className={`rounded px-3 py-1.5 ${tab === "coverage" ? "bg-black text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
               data-testid="tab-coverage"
             >
               Coverage
@@ -469,7 +474,7 @@ export default function Home() {
                 {app && (
                   <button
                     onClick={toggleCommentMode}
-                    className={`rounded px-3 py-1.5 text-sm font-medium ${commentMode ? "bg-amber-500 text-white" : "bg-gray-200"}`}
+                    className={`rounded px-3 py-1.5 text-sm font-medium ${commentMode ? "bg-amber-500 text-white" : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"}`}
                     data-testid="comment-mode-toggle"
                   >
                     {commentMode ? "Comment mode: ON (click an element)" : "Comment mode"}
@@ -565,7 +570,7 @@ export default function Home() {
               {coverageLoading ? (
                 <div className="text-sm text-gray-500">Crawling a few states beyond your missions…</div>
               ) : !coverage ? (
-                <button onClick={() => void fetchCoverage()} className="rounded bg-gray-200 px-3 py-1.5 text-sm" data-testid="coverage-run">
+                <button onClick={() => void fetchCoverage()} className="rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 px-3 py-1.5 text-sm" data-testid="coverage-run">
                   Run a light coverage crawl
                 </button>
               ) : (
@@ -606,6 +611,8 @@ export default function Home() {
                       onClick={() => {
                         setSelectedMission(m.mission.id);
                         setAnchor(null);
+                        setFlip(null);
+                        setDiff(null);
                       }}
                       className={`flex w-full flex-col items-start gap-1 border-b px-3 py-2 text-left text-sm hover:bg-gray-50 ${selectedMission === m.mission.id ? "bg-indigo-50" : ""}`}
                       data-testid="mission-row"
@@ -629,8 +636,8 @@ export default function Home() {
                     <p className="text-sm text-gray-600">{selected.mission.description}</p>
                     <div className="flex gap-2 text-xs">
                       <button
-                        onClick={() => setAnchor({ missionId: selected.mission.id })}
-                        className="rounded bg-gray-200 px-2 py-1"
+                        onClick={() => { setAnchor({ missionId: selected.mission.id }); setFlip(null); setDiff(null); }}
+                        className="rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 px-2 py-1"
                         data-testid="comment-mission"
                       >
                         Comment on mission
@@ -644,7 +651,7 @@ export default function Home() {
                         {selected.regressionPromoted ? "✓ regression test" : "Promote to regression test"}
                       </button>
                       {selected.trace.video && (
-                        <a className="rounded bg-gray-200 px-2 py-1" href={artifactUrl(selected.trace.video)} target="_blank" rel="noreferrer">
+                        <a className="rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 px-2 py-1" href={artifactUrl(selected.trace.video)} target="_blank" rel="noreferrer">
                           video
                         </a>
                       )}
@@ -654,7 +661,7 @@ export default function Home() {
                       {selected.trace.steps.map((s) => (
                         <button
                           key={s.index}
-                          onClick={() => setAnchor({ missionId: selected.mission.id, stepIndex: s.index })}
+                          onClick={() => { setAnchor({ missionId: selected.mission.id, stepIndex: s.index }); setFlip(null); setDiff(null); }}
                           className={`flex flex-col gap-1 rounded border p-1 text-left text-xs hover:border-indigo-400 ${anchor?.stepIndex === s.index && anchor?.missionId === selected.mission.id ? "border-indigo-500" : ""}`}
                           data-testid="step-thumb"
                         >
@@ -682,11 +689,31 @@ export default function Home() {
                         />
                         <button
                           onClick={submitComment}
-                          className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-white"
+                          disabled={submitting || !commentText.trim()}
+                          className="rounded bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-60"
                           data-testid="comment-submit"
                         >
-                          Submit comment
+                          {submitting ? "Re-walking… (~10s)" : "Submit comment"}
                         </button>
+
+                        {/* inline feedback, right where you clicked — not just in the sidebar */}
+                        {submitting && (
+                          <p className="flex items-center gap-2 text-xs text-amber-800" data-testid="comment-progress">
+                            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-700 border-t-transparent" />
+                            tuple → edit → rebuild → re-walk → re-assert…
+                          </p>
+                        )}
+                        {!submitting && flip && (
+                          <div
+                            className={`rounded p-2 text-xs ${flip.assertionResult === "flipped" ? "bg-green-100 text-green-900" : "bg-amber-100 text-amber-900"}`}
+                            data-testid="comment-result"
+                          >
+                            <div className="font-medium">
+                              {flip.assertionResult === "flipped" ? "✓ assertion flipped — verdict now passes" : `re-walk outcome: ${flip.assertionResult}`}
+                            </div>
+                            {flip.detail && <div className="opacity-80">{flip.detail}</div>}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

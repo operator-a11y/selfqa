@@ -81,9 +81,16 @@ async function main(): Promise<void> {
     await page.getByTestId("step-thumb").first().click();
     await page.getByTestId("comment-input").fill("the title should indicate it was edited");
     await page.getByTestId("comment-submit").click();
+    // submit must give IMMEDIATE feedback (button disables + inline progress) so it
+    // never looks like "nothing happened" during the ~10s re-walk (regression guard).
+    truthy("submit shows inline progress while re-walking", await ok(page.getByTestId("comment-progress").waitFor({ timeout: 5000 })));
+    truthy("submit button disables while in flight", await page.getByTestId("comment-submit").isDisabled().catch(() => false));
     truthy("flip-result panel appears after re-walk", await ok(page.getByTestId("flip-result").waitFor({ timeout: 180000 })));
     const flipText = (await page.getByTestId("flip-result").textContent()) ?? "";
     truthy("UI shows the assertion flipped fail->pass (" + flipText.trim().slice(0, 40) + ")", /flipped/.test(flipText));
+    // the result also shows INLINE, right under the composer (not only in the sidebar).
+    const inline = (await page.getByTestId("comment-result").textContent().catch(() => "")) ?? "";
+    truthy("comment result shows inline by the composer (" + inline.trim().slice(0, 32) + ")", /flipped|passes/.test(inline));
 
     await page.getByTestId("promote-mission").click();
     await page.waitForTimeout(2500);
