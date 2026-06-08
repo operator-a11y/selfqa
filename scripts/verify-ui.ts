@@ -77,6 +77,19 @@ async function main(): Promise<void> {
     await page.getByTestId("mission-row").first().click();
     truthy("step thumbnails render", await ok(page.getByTestId("step-thumb").first().waitFor({ timeout: 20000 })));
 
+    // The closed loop in the browser: comment on a step -> Re-walk -> flip green.
+    await page.getByTestId("step-thumb").first().click();
+    await page.getByTestId("comment-input").fill("the title should indicate it was edited");
+    await page.getByTestId("comment-submit").click();
+    truthy("flip-result panel appears after re-walk", await ok(page.getByTestId("flip-result").waitFor({ timeout: 180000 })));
+    const flipText = (await page.getByTestId("flip-result").textContent()) ?? "";
+    truthy("UI shows the assertion flipped fail->pass (" + flipText.trim().slice(0, 40) + ")", /flipped/.test(flipText));
+
+    await page.getByTestId("promote-mission").click();
+    await page.waitForTimeout(2500);
+    const promoteText = (await page.getByTestId("promote-mission").textContent()) ?? "";
+    truthy("promote marks the mission a regression test", promoteText.includes("✓"));
+
     await closeBrowser();
   } finally {
     for (const p of [worker, selfqa]) {

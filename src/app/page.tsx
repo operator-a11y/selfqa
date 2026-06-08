@@ -31,11 +31,23 @@ interface MissionRunT {
   mission: { id: string; name: string; description: string };
   verdict: VerdictT;
   trace: TraceT;
+  regressionPromoted?: boolean;
 }
 interface RunT {
   appId: string;
   buildSha: string;
   missions: MissionRunT[];
+}
+interface FlipT {
+  assertionResult: string;
+  verdict: VerdictT;
+  resolved: boolean;
+  detail: string;
+}
+interface DiffT {
+  newlyPass: string[];
+  newlyFail: string[];
+  changed: { missionId: string; from: string; to: string }[];
 }
 interface CommentTarget {
   url: string;
@@ -74,6 +86,8 @@ export default function Home() {
   const [selectedMission, setSelectedMission] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<{ missionId: string; stepIndex?: number } | null>(null);
   const [commentText, setCommentText] = useState("");
+  const [flip, setFlip] = useState<FlipT | null>(null);
+  const [diff, setDiff] = useState<DiffT | null>(null);
 
   // explore (iframe) state — M1 flow
   const [commentMode, setCommentMode] = useState(false);
@@ -144,11 +158,38 @@ export default function Home() {
     }
   }
 
+  async function refreshMissions() {
+    if (!app) return;
+    try {
+      const res = await fetch(`/api/missions?appId=${encodeURIComponent(app.appId)}`);
+      const data = await res.json();
+      if (res.ok) setRun(data as RunT);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function promote(missionId: string) {
+    if (!app) return;
+    try {
+      await fetch("/api/promote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ appId: app.appId, missionId }),
+      });
+      setStatus(`Promoted ${missionId} to a permanent regression test.`);
+      await refreshMissions();
+    } catch (e) {
+      setStatus(`Promote: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   async function submitComment() {
     if (!app) return;
     const body: Record<string, unknown> = { appId: app.appId, nl: commentText };
     if (anchor) {
       body.missionId = anchor.missionId;
+      body.commentType = typeof anchor.stepIndex === "number" ? "step-anchored" : "mission-level";
       if (typeof anchor.stepIndex === "number") body.stepIndex = anchor.stepIndex;
     } else if (target) {
       body.url = target.url;
@@ -156,7 +197,9 @@ export default function Home() {
     } else {
       return;
     }
-    setStatus("Sending grounded comment…");
+    setStatus("Comment → tuple → edit → rebuild → re-walk…");
+    setFlip(null);
+    setDiff(null);
     try {
       const res = await fetch("/api/comment", {
         method: "POST",
@@ -165,13 +208,24 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "comment failed");
+      if (data.route === "needs-human") {
+        setStatus(`Couldn't ground this comment (${data.reason}) → needs-human.`);
+        return;
+      }
       const newUrl: string = data.url ?? app.url;
       setApp({ ...app, url: newUrl, sha: data.sha ?? app.sha });
-      setStatus(`Edit applied (sha ${(data.sha ?? "?").slice?.(0, 10)}). Re-run missions to re-verify.`);
+      setFlip((data.flip as FlipT) ?? null);
+      setDiff((data.diff as DiffT) ?? null);
+      setStatus(
+        data.flip?.assertionResult === "flipped"
+          ? "✓ assertion flipped fail→pass"
+          : `re-walk outcome: ${data.flip?.assertionResult ?? "done"}`,
+      );
       setAnchor(null);
       setTarget(null);
       setCommentText("");
       if (iframeRef.current) iframeRef.current.src = `${newUrl}?t=${Date.now()}`;
+      await refreshMissions();
     } catch (e) {
       setStatus(`Comment: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -257,6 +311,31 @@ export default function Home() {
               {run.missions.filter((m) => m.verdict.status === "pass").length} passed
             </div>
           )}
+
+          {flip && (
+            <div
+              className={`rounded p-2 text-xs ${flip.assertionResult === "flipped" ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}
+              data-testid="flip-result"
+            >
+              <div className="font-medium">
+                re-walk: {flip.assertionResult === "flipped" ? "✓ assertion flipped fail→pass" : flip.assertionResult}
+              </div>
+              <div className="text-gray-600">{flip.detail}</div>
+            </div>
+          )}
+
+          {diff && (diff.newlyPass.length > 0 || diff.newlyFail.length > 0 || diff.changed.length > 0) && (
+            <div className="rounded bg-gray-50 p-2 text-xs text-gray-700" data-testid="run-diff">
+              <div className="font-medium">Run-to-run diff (SHA vs SHA)</div>
+              {diff.newlyPass.length > 0 && <div className="text-green-700">newly pass: {diff.newlyPass.join(", ")}</div>}
+              {diff.newlyFail.length > 0 && <div className="text-red-700">newly fail: {diff.newlyFail.join(", ")}</div>}
+              {diff.changed.map((c) => (
+                <div key={c.missionId}>
+                  {c.missionId}: {c.from} → {c.to}
+                </div>
+              ))}
+            </div>
+          )}
         </aside>
 
         <main className="min-h-0 flex-1 bg-gray-50">
@@ -322,6 +401,14 @@ export default function Home() {
                         data-testid="comment-mission"
                       >
                         Comment on mission
+                      </button>
+                      <button
+                        onClick={() => promote(selected.mission.id)}
+                        disabled={selected.regressionPromoted}
+                        className="rounded bg-green-600 px-2 py-1 text-white disabled:opacity-50"
+                        data-testid="promote-mission"
+                      >
+                        {selected.regressionPromoted ? "✓ regression test" : "Promote to regression test"}
                       </button>
                       {selected.trace.video && (
                         <a className="rounded bg-gray-200 px-2 py-1" href={artifactUrl(selected.trace.video)} target="_blank" rel="noreferrer">
