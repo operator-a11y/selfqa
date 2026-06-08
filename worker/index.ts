@@ -17,7 +17,12 @@ import {
   currentSha,
   type AppRepo,
 } from "../src/lib/core/workspace/repo";
-import { startApp, stopAll, type RunningApp } from "../src/lib/core/runner/app-runner";
+import {
+  startApp,
+  rebuildApp,
+  stopAll,
+  type RunningApp,
+} from "../src/lib/core/runner/app-runner";
 
 const PORT = Number(process.env.SELFQA_WORKER_PORT ?? 4317);
 const provider = getProvider();
@@ -101,13 +106,16 @@ const server = http.createServer(async (req, res) => {
         url,
         domPath,
       });
+      // Production has no Fast-Refresh: rebuild + restart, then expose the new url.
+      const rebuilt = await rebuildApp(built.running);
+      built.running = rebuilt;
       console.log(
-        `[worker] comment on ${appId} -> edit ${edit.sha} (${edit.changed.join(", ")})`,
+        `[worker] comment on ${appId} -> edit ${edit.sha} (${edit.changed.join(", ")}), rebuilt at ${rebuilt.url}`,
       );
-      // `next dev` Fast-Refresh picks up the file change; the UI reloads the iframe.
       return sendJson(res, 200, {
         sha: edit.sha,
         changed: edit.changed,
+        url: rebuilt.url,
         assertion: spec.assertion,
         clarifyingQuestion: spec.clarifyingQuestion,
       });

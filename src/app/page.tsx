@@ -93,8 +93,11 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "comment failed");
+      // The edit triggers a rebuild on a NEW port; use the url the worker returns.
+      const newUrl: string = data.url ?? app.url;
+      setApp({ ...app, url: newUrl, sha: data.sha ?? app.sha });
       setStatus(`Edit applied (sha ${data.sha ?? "?"}). Reloading…`);
-      if (iframeRef.current) iframeRef.current.src = `${app.url}?t=${Date.now()}`;
+      if (iframeRef.current) iframeRef.current.src = `${newUrl}?t=${Date.now()}`;
       setTarget(null);
       setCommentText("");
       setCommentMode(false);

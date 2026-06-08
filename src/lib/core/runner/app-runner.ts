@@ -1,18 +1,22 @@
 /**
  * Generated-app runner (SPEC §14.2 / §14.3).
  *
- * Each generated app runs as a lifecycle-managed `next dev` subprocess on an
- * allocated port; the UI/iframe and (later) Playwright target localhost:port.
- * Subprocesses are started detached (own process group) so the whole tree can
- * be reaped, and are tracked in a registry that's killed on worker exit.
+ * Each generated app runs as a lifecycle-managed PRODUCTION server: `next build`
+ * then `next start` on an allocated port. Production (not `next dev`) because:
+ *  - `next dev` (Next 16 + Turbopack, this harness) does not reliably hydrate,
+ *    which breaks all interactivity (the walk + the iframe both need it);
+ *  - production has no HMR socket / on-demand compile races, so the walk is more
+ *    deterministic — squarely the SPEC's goal.
+ * Edits are reflected by rebuildApp() (rebuild + restart), not Fast-Refresh.
+ *
+ * Subprocesses are started detached (own process group) so the whole tree can be
+ * reaped, and are tracked in a registry killed on worker exit.
+ *
+ * Egress (SPEC §14.3): the RUN step is egress-blocked (dead proxy); the BUILD
+ * step runs without the proxy (it is our trusted codegen step). Hard per-process
+ * enforcement is the Docker/microVM earned hardening (SPEC §14.4); not a boundary.
  *
  * SERVER-ONLY (node:child_process, node:net, node:fs).
- *
- * Egress (SPEC §14.3): true per-process egress blocking is straightforward on
- * Linux (network namespaces) but has no cheap equivalent on macOS without a
- * container. On macOS the primary guarantee is "fixtures mock everything", and
- * hard egress enforcement is the Docker/microVM earned hardening (SPEC §14.4).
- * We mark the child and fail proxies fast, but this is NOT a security boundary.
  */
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
@@ -64,28 +68,38 @@ export async function ensureDeps(dir: string): Promise<void> {
   });
 }
 
-/** SPEC §14.3 — best-effort egress signal (NOT a security boundary on macOS). */
+/** Production build (trusted codegen step; no egress proxy). */
+export async function nextBuild(dir: string): Promise<void> {
+  await exec("npm", ["run", "build"], {
+    cwd: dir,
+    maxBuffer: 1 << 26,
+    env: { ...process.env },
+  });
+}
+
+/** SPEC §14.3 — best-effort egress signal at RUN time (NOT a security boundary on macOS). */
 function egressEnv(): Record<string, string> {
+  if (process.env.SELFQA_DISABLE_EGRESS_PROXY) {
+    return { SELFQA_EGRESS: "off" };
+  }
   return {
     SELFQA_EGRESS: "blocked",
-    // Route accidental outbound through a dead proxy so it fails fast rather
-    // than silently succeeding. Real enforcement = Docker/microVM (SPEC §14.4).
     HTTP_PROXY: "http://127.0.0.1:1",
     HTTPS_PROXY: "http://127.0.0.1:1",
     NO_PROXY: "127.0.0.1,localhost",
   };
 }
 
-export async function startApp(
+async function launchServer(
   dir: string,
-  opts: { id: string; readyTimeoutMs?: number },
+  id: string,
+  readyTimeoutMs: number,
 ): Promise<RunningApp> {
-  await ensureDeps(dir);
   const port = await allocatePort();
   const url = `http://127.0.0.1:${port}`;
 
   let stderr = "";
-  const proc = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
+  const proc = spawn("npm", ["run", "start", "--", "-p", String(port)], {
     cwd: dir,
     detached: true,
     env: { ...process.env, ...egressEnv() },
@@ -96,7 +110,7 @@ export async function startApp(
   });
 
   const app: RunningApp = {
-    id: opts.id,
+    id,
     dir,
     port,
     url,
@@ -106,12 +120,31 @@ export async function startApp(
   registry.add(app);
 
   try {
-    await waitForReady(url, opts.readyTimeoutMs ?? 90_000, proc, () => stderr);
+    await waitForReady(url, readyTimeoutMs, proc, () => stderr);
   } catch (e) {
     await stopApp(app);
     throw e;
   }
   return app;
+}
+
+export async function startApp(
+  dir: string,
+  opts: { id: string; readyTimeoutMs?: number },
+): Promise<RunningApp> {
+  await ensureDeps(dir);
+  await nextBuild(dir);
+  return launchServer(dir, opts.id, opts.readyTimeoutMs ?? 90_000);
+}
+
+/** Reflect an edit: stop, rebuild, relaunch (production has no Fast-Refresh). */
+export async function rebuildApp(
+  app: RunningApp,
+  opts: { readyTimeoutMs?: number } = {},
+): Promise<RunningApp> {
+  await stopApp(app);
+  await nextBuild(app.dir);
+  return launchServer(app.dir, app.id, opts.readyTimeoutMs ?? 90_000);
 }
 
 function delay(ms: number): Promise<void> {
@@ -129,12 +162,11 @@ async function waitForReady(
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) {
       throw new Error(
-        `dev server exited early (code ${proc.exitCode}). stderr:\n${getStderr()}`,
+        `app server exited early (code ${proc.exitCode}). stderr:\n${getStderr()}`,
       );
     }
     try {
       const res = await fetch(url, { method: "GET" });
-      // Any non-server-error response means the server is up and routing.
       if (res.status < 500) return;
     } catch (e) {
       lastErr = e;
@@ -142,7 +174,7 @@ async function waitForReady(
     await delay(500);
   }
   throw new Error(
-    `dev server not ready within ${timeoutMs}ms (last error: ${String(lastErr)}). stderr:\n${getStderr()}`,
+    `app server not ready within ${timeoutMs}ms (last error: ${String(lastErr)}). stderr:\n${getStderr()}`,
   );
 }
 
@@ -151,7 +183,6 @@ export async function stopApp(app: RunningApp): Promise<void> {
   const pid = app.proc.pid;
   if (pid && app.proc.exitCode === null) {
     try {
-      // Negative pid = kill the whole process group (next + its workers).
       process.kill(-pid, "SIGTERM");
     } catch {
       /* group already gone */
@@ -163,7 +194,6 @@ export async function stopAll(): Promise<void> {
   await Promise.all([...registry].map((a) => stopApp(a)));
 }
 
-// Reap orphans if the owning process dies (SPEC §14.2). Handlers must be sync.
 function reapAll(): void {
   for (const app of registry) {
     const pid = app.proc.pid;

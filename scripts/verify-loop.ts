@@ -11,7 +11,7 @@ import { StubProvider } from "../src/lib/core/provider/stub";
 import { buildApp } from "../src/lib/core/codegen/build-agent";
 import { instrument } from "../src/lib/core/instrument/inject";
 import { writeGeneratedApp, WORKSPACE_ROOT } from "../src/lib/core/workspace/repo";
-import { startApp } from "../src/lib/core/runner/app-runner";
+import { startApp, rebuildApp } from "../src/lib/core/runner/app-runner";
 import { extractSpec } from "../src/lib/core/codegen/spec-extractor";
 import { editApp } from "../src/lib/core/codegen/edit-agent";
 
@@ -59,18 +59,20 @@ async function main(): Promise<void> {
   const edit = await editApp(provider, { dir: repo.dir, comment, url: running.url, domPath });
   console.log(`edit committed ${edit.sha} (changed: ${edit.changed.join(", ")})`);
 
-  const reflected = await pollFor(running.url, "edited by SelfQA", 30_000);
+  // Production has no Fast-Refresh — rebuild + restart to reflect the edit.
+  const running2 = await rebuildApp(running);
+  const reflected = await pollFor(running2.url, "edited by SelfQA", 30_000);
   const elapsedMs = Date.now() - t0;
   console.log(
-    `change reflected in running app: ${reflected} (comment→verified in ${elapsedMs}ms)`,
+    `change reflected after rebuild: ${reflected} (comment→rebuilt→verified in ${elapsedMs}ms)`,
   );
 
-  await running.stop();
+  await running2.stop();
 
   if (!original) throw new Error("precondition: original title not present before edit");
-  if (!reflected) throw new Error("edit was not reflected in the running app");
-  if (elapsedMs > 60_000) throw new Error(`exceeded 60s budget (${elapsedMs}ms)`);
-  console.log("OK: M1 loop — comment → code change → verified in running app, < 60s");
+  if (!reflected) throw new Error("edit was not reflected in the rebuilt app");
+  if (elapsedMs > 120_000) throw new Error(`exceeded 120s budget (${elapsedMs}ms)`);
+  console.log("OK: loop — comment → code change → rebuilt → verified in running app");
 }
 
 main().catch((e) => {

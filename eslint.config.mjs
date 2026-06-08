@@ -12,7 +12,40 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // SelfQA: generated apps + heavy artifacts have their own configs; don't lint them.
+    "workspace/**",
+    "artifacts/**",
   ]),
+  // SPEC §6.3 — hot-path files must NEVER import an LLM provider (enforced, not aspirational).
+  {
+    files: ["src/lib/core/harness/**/*.ts", "src/lib/core/walk/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/provider", "**/provider/*"],
+              message: "Hot-path files (SPEC §6.3) must not import an LLM provider.",
+            },
+            {
+              group: ["@anthropic-ai/sdk"],
+              message: "Hot-path files (SPEC §6.3) must not import the Anthropic SDK.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // Allow intentionally-unused params/vars when prefixed with _ (e.g. seam hooks).
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;
