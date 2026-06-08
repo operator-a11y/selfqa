@@ -29,6 +29,7 @@
     "verify:manifest": "tsx scripts/verify-manifest.ts",
     "verify:flip": "tsx scripts/verify-flip.ts",
     "verify:semantic-verdict": "tsx scripts/verify-semantic-verdict.ts",
+    "verify:rewalk": "tsx scripts/verify-rewalk.ts",
     "verify:runner": "tsx scripts/verify-runner.ts",
     "verify:instrument": "tsx scripts/verify-instrument.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",

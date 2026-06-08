@@ -40,8 +40,29 @@ for (const root of ROOTS) {
   }
 }
 
+// Extended (M5-I): the re-walk per-comment loop body must be provider-free (§6.3) —
+// scan the marked region in rewalk/run-rewalk.ts mechanically, not by review.
+{
+  const f = "src/lib/core/rewalk/run-rewalk.ts";
+  const src = readFileSync(f, "utf8");
+  const m = src.match(/SELFQA-REWALK-LOOP-START([\s\S]*?)SELFQA-REWALK-LOOP-END/);
+  if (!m) {
+    violations++;
+    console.error(`HOT-PATH VIOLATION: ${f} is missing the SELFQA-REWALK-LOOP sentinels`);
+  } else {
+    scanned++;
+    const forbidden = [/\bcompileSequence\b/, /\bbatchSemanticVerdict\b/, /\bgetProvider\b/, /\bAnthropicProvider\b/, /provider\.complete/];
+    for (const re of forbidden) {
+      if (re.test(m[1])) {
+        violations++;
+        console.error(`HOT-PATH VIOLATION: re-walk loop body matches ${re}`);
+      }
+    }
+  }
+}
+
 if (violations) {
   console.error(`\n${violations} hot-path violation(s) across ${scanned} files`);
   process.exit(1);
 }
-console.log(`OK: ${scanned} hot-path files import zero provider code (SPEC §6.3)`);
+console.log(`OK: ${scanned} hot-path files/regions import zero provider code (SPEC §6.3)`);

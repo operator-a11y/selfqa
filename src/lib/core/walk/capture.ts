@@ -34,7 +34,7 @@ export async function captureStep(
   return { screenshot, dom, url: page.url() };
 }
 
-async function resolveOnPage(
+export async function resolveOnPage(
   page: Page,
   selector: string,
 ): Promise<ResolvedElement | null> {
@@ -44,7 +44,9 @@ async function resolveOnPage(
     if (count === 0) return { present: false, visible: false, text: "" };
     const first = loc.first();
     const visible = await first.isVisible().catch(() => false);
-    const text = (await first.textContent().catch(() => "")) ?? "";
+    // Trim: JSX formats element text with surrounding whitespace; text-equals
+    // compares the rendered content, not the indentation.
+    const text = ((await first.textContent().catch(() => "")) ?? "").trim();
     return { present: true, visible, text };
   } catch {
     // Malformed selector / evaluation failure = could-not-evaluate.

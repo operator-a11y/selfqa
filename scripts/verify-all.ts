@@ -25,6 +25,7 @@ const FAST = [
 ];
 const HEAVY = [
   "verify-action-capture",
+  "verify-rewalk",
   "verify-runner",
   "verify-instrument",
   "verify-loop",

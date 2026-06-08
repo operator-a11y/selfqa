@@ -80,6 +80,15 @@ function routeMatch(changedRoute: string, visitedRoute: string): boolean {
   return a.every((seg, i) => seg === b[i] || seg.startsWith("[") || b[i].startsWith("["));
 }
 
+/** Did the edit touch any route this mission visits? (everything bucket => always). */
+export function missionTouched(
+  trace: MissionTrace | undefined,
+  cls: DiffClassification,
+): boolean {
+  if (cls.bucket === "everything") return true;
+  return missionRoutes(trace).some((v) => cls.routes.some((cr) => routeMatch(cr, v)));
+}
+
 /** Affected missions (by ALL routes they visit) UNION the always-on smoke set. */
 export function selectRewalkSet(
   missions: Mission[],

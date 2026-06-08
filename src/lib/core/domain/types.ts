@@ -228,3 +228,23 @@ export interface RewalkManifest {
   reason: string;
   everythingBucket: boolean;
 }
+
+/** SPEC §3 — the per-comment result of a re-walk (did the assertion flip?). */
+export interface ReWalkOutcome {
+  commentId: string;
+  missionId: string;
+  assertionResult:
+    | "flipped"
+    | "not-flipped"
+    | "already-satisfied"
+    | "could-not-evaluate"
+    | "needs-semantic";
+  verdict: Verdict;
+  resolved: boolean;
+  detail: string;
+}
+
+export interface ReWalkRecord {
+  outcomes: ReWalkOutcome[];
+  recompileRate: number; // fraction of re-walked missions whose sequence was recompiled
+}
