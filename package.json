@@ -24,6 +24,7 @@
     "verify:build-agent": "tsx scripts/verify-build-agent.ts",
     "verify:action-capture": "tsx scripts/verify-action-capture.ts",
     "verify:tuple-anchor": "tsx scripts/verify-tuple-anchor.ts",
+    "verify:tuple-assemble": "tsx scripts/verify-tuple-assemble.ts",
     "verify:runner": "tsx scripts/verify-runner.ts",
     "verify:instrument": "tsx scripts/verify-instrument.ts",
     "verify:loop": "tsx scripts/verify-loop.ts",
