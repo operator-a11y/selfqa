@@ -227,10 +227,23 @@ const server = http.createServer(async (req, res) => {
 
       // 5. merge updated verdicts (preserving promotion flags); compute the diff
       const updatedById = new Map((record.missions ?? []).map((m) => [m.mission.id, m]));
+      // A grounded comment whose deterministic assertion FLIPPED fail→pass elevates
+      // its mission's verdict to pass — provisional until human promote (SPEC §3,
+      // §11.1). The mission's own first-walk criteria may still be ambiguous (e.g.
+      // text-equals is off the whitelist), so without this the flip would never
+      // surface in the run-to-run diff. The pass is EARNED (deterministic + human-
+      // grounded), never guessed; humanApproved stays false until promote.
+      const resolvedVerdict = new Map(
+        record.outcomes
+          .filter((o) => o.resolved && o.verdict.status === "pass")
+          .map((o) => [o.missionId, o.verdict]),
+      );
       const prior = run.missions;
       const next = run.missions.map((m) => {
         const u = updatedById.get(m.mission.id);
-        return u ? { ...u, regressionPromoted: m.regressionPromoted, retirementProposed: m.retirementProposed } : m;
+        const merged = u ? { ...u, regressionPromoted: m.regressionPromoted, retirementProposed: m.retirementProposed } : m;
+        const rv = resolvedVerdict.get(m.mission.id);
+        return rv ? { ...merged, verdict: { ...rv, buildSha: shaAfter } } : merged;
       });
       next.sort((a, b) => rankVerdict(a.verdict.status) - rankVerdict(b.verdict.status));
       const nextRun: RunRecord = { appId, buildSha: shaAfter, missions: next };

@@ -38,6 +38,7 @@ const HEAVY = [
   "verify-walk",
   "verify-endpoints",
   "verify-ui",
+  "verify-loop-e2e",
 ];
 
 const onlyFast =

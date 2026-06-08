@@ -31,6 +31,13 @@ export function normalizeRoute(urlOrRoute: string): string {
  * EVERYTHING else (components/**, lib/**, root app/layout|template|globals,
  * fixtures, prisma, configs, unknown/top-level paths) -> null -> shared. The
  * unmapped path falls to the SAFE side by construction — no discretion.
+ *
+ * SELFQA-EARNED-OPTIMIZATION (SPEC §9.5): this conservative path-prefix test is
+ * the ONE thing the precise import-graph resolver later REPLACES. It tightens
+ * which "shared" files are truly shared (fewer everything-bucket re-walks) WITHOUT
+ * touching the two-bucket contract, missionTouched, or selectRewalkSet above. It
+ * is an optimization to be EARNED against the everything-bucket-fraction metric
+ * (M6-B) — not a correctness gap: over-broad here only ever re-walks too much.
  */
 function localRouteOf(file: string): string | null {
   const m = file.match(/^src\/app\/(.+)$/);

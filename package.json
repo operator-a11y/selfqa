@@ -41,7 +41,8 @@
     "verify:harness": "tsx scripts/verify-harness.ts",
     "verify:walk": "tsx scripts/verify-walk.ts",
     "verify:endpoints": "tsx scripts/verify-endpoints.ts",
-    "verify:ui": "tsx scripts/verify-ui.ts"
+    "verify:ui": "tsx scripts/verify-ui.ts",
+    "verify:loop-e2e": "tsx scripts/verify-loop-e2e.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
