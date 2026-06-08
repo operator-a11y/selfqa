@@ -73,3 +73,11 @@ export async function buildObservedState(
 export function unreachableState(url: string): ObservedState {
   return { url, consoleErrors: [], q: () => null };
 }
+
+/** Guard for /api/artifact: the path must stay within ARTIFACTS_ROOT (no escape). */
+export function isUnderArtifactsRoot(p: string): boolean {
+  const resolved = path.resolve(p);
+  return (
+    resolved === ARTIFACTS_ROOT || resolved.startsWith(ARTIFACTS_ROOT + path.sep)
+  );
+}

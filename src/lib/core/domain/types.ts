@@ -165,3 +165,23 @@ export interface MissionTrace {
   httpStatus?: number;
   consoleErrors: string[];
 }
+
+/**
+ * A mission's result for one build: its (provisional) verdict + the trace that
+ * produced it. The optional fields are forward-compat for M5's §7.5
+ * promotion/retirement so frozen types above don't need to change.
+ */
+export interface MissionRun {
+  mission: Mission;
+  verdict: Verdict;
+  trace: MissionTrace;
+  regressionPromoted?: boolean;
+  retirementProposed?: { reason: string };
+}
+
+/** A whole run for one app build; `missions` is sorted failed > ambiguous > passed. */
+export interface RunRecord {
+  appId: string;
+  buildSha: string;
+  missions: MissionRun[];
+}
