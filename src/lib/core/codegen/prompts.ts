@@ -1,12 +1,14 @@
 /**
- * Codegen prompts (used by the real AnthropicProvider path). The StubProvider
- * keys off the `build-agent` / `edit-agent` markers in these system prompts to
- * decide which canned response to return, so the prompts double as routing.
- *
- * Pure strings — safe to import anywhere.
+ * Codegen prompts. Every system prompt's FIRST line is a canonical role token
+ * `selfqa-role: <role>` and the StubProvider routes on that EXACT token (not
+ * loose substrings) — so a prompt body that mentions build/edit/spec can never
+ * misroute. Pure strings (+ type-only imports) — safe to import anywhere.
  */
+import type { GeneratedFile } from "./protocol";
+import type { Mission } from "../domain/types";
 
-export const BUILD_SYSTEM_PROMPT = `You are SelfQA's build-agent.
+export const BUILD_SYSTEM_PROMPT = `selfqa-role: build-agent
+You are SelfQA's build-agent.
 
 You build a complete, runnable web app from a natural-language prompt in EXACTLY
 this stack: Next.js (App Router) + TypeScript + Tailwind CSS + shadcn/ui, with a
@@ -20,6 +22,9 @@ Hard rules:
 - Emit a working package.json with pinned, compatible versions and dev/build/start scripts.
 - Put stable data-testid attributes on every interactive and assertable element
   (SPEC §13.2 — they are the top rung of the selector ladder).
+- Mark every error/validation message with a known-error selector so SelfQA can
+  machine-verify error states: role="alert", or data-testid="error" / data-testid
+  ending in "-error", or aria-invalid="true" (SPEC §7.2).
 - Keep the app small and focused: a handful of routes and real forms.
 - Do not reach external services; all I/O must be local or mocked (SPEC §12/§14.3).`;
 
@@ -27,7 +32,8 @@ export function buildUserPrompt(appPrompt: string): string {
   return `Build this app:\n\n${appPrompt}\n\nRemember: output only <selfqa:file> blocks.`;
 }
 
-export const EDIT_SYSTEM_PROMPT = `You are SelfQA's edit-agent.
+export const EDIT_SYSTEM_PROMPT = `selfqa-role: edit-agent
+You are SelfQA's edit-agent.
 
 You make a SMALL, localized edit to an existing app to address one or more
 grounded comments. You are a stateful editor of a persistent repo (SPEC §8.2):
@@ -56,7 +62,8 @@ export function editUserPrompt(args: {
   ].join("\n");
 }
 
-export const SPEC_EXTRACTOR_SYSTEM_PROMPT = `You are SelfQA's spec-extractor.
+export const SPEC_EXTRACTOR_SYSTEM_PROMPT = `selfqa-role: spec-extractor
+You are SelfQA's spec-extractor.
 
 Given a human comment anchored to a specific element, turn it into a typed
 assertion (SPEC §6.1):
@@ -82,4 +89,54 @@ export function specExtractorUserPrompt(args: {
     `Element (DOM path): ${args.domPath}`,
     `Return only the JSON object.`,
   ].join("\n");
+}
+
+export const MISSION_DERIVER_SYSTEM_PROMPT = `selfqa-role: mission-deriver
+You are SelfQA's mission-deriver.
+
+From the app prompt + code, derive 8-15 named user missions. Each mission is:
+{ "id": "mission-<kebab-case>", "name", "description", "intendedSteps": [NL steps], "acceptanceCriteria": [typed assertions] }
+
+Rules:
+- intendedSteps are NATURAL-LANGUAGE intent only — never selectors (P2).
+- acceptanceCriteria are typed exactly like comment assertions (SPEC §6.1):
+  deterministic {type,predicate:{kind,selector?,expected?},nl} or semantic {type,nl}.
+- Do NOT invent fake-precise deterministic predicates; if a check needs taste, mark
+  it semantic (P1). Prefer deterministic only where it is truly mechanical.
+- Cover happy paths, empty/invalid input, and at least one adversarial/abuse mission.
+- On an INFORMED run, propose NET-NEW missions only and list the existing ids in reusedIds.
+- Output ONLY JSON: {"missions":[...],"reusedIds":[...]}. No prose, no fences.`;
+
+export function missionDeriverUserPrompt(args: {
+  appPrompt: string;
+  files: GeneratedFile[];
+  existingMissions?: Mission[];
+  frozenRegressionTests?: Mission[];
+}): string {
+  const informed =
+    (args.existingMissions?.length ?? 0) > 0 ||
+    (args.frozenRegressionTests?.length ?? 0) > 0;
+  const fileList = args.files
+    .map((f) => `--- ${f.path} ---\n${f.content}`)
+    .join("\n\n");
+  const lines = [
+    `MODE: ${informed ? "informed" : "cold"}`,
+    `App prompt: ${args.appPrompt}`,
+    ``,
+    `Code:`,
+    fileList,
+  ];
+  if (informed) {
+    const existing = [
+      ...(args.existingMissions ?? []),
+      ...(args.frozenRegressionTests ?? []),
+    ];
+    lines.push(
+      ``,
+      `EXISTING MISSIONS (do NOT regenerate these; propose NET-NEW only, and put their ids in reusedIds):`,
+    );
+    for (const m of existing) lines.push(`- ${m.id}: ${m.name}`);
+  }
+  lines.push(``, `Return ONLY the JSON {"missions":[...],"reusedIds":[...]}.`);
+  return lines.join("\n");
 }

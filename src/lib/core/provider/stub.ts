@@ -16,6 +16,7 @@ import type {
   LLMCompletionResult,
 } from "./types";
 import { serializeFileBlocks, type GeneratedFile } from "../codegen/protocol";
+import { STUB_COLD_MISSIONS, STUB_INFORMED_MISSIONS } from "./stub-missions";
 
 /** A tiny but real Next.js + Tailwind todo app — something with a form to comment on. */
 const CANNED_TODO_APP: GeneratedFile[] = [
@@ -201,15 +202,20 @@ export class StubProvider implements LLMProvider {
 
   async complete(req: LLMCompletionRequest): Promise<LLMCompletionResult> {
     const system = req.system ?? "";
+    // Route on the canonical role token on line 1 (collision-proof), never on
+    // loose substrings that the prompt BODIES would trip (SPEC §6 spine work).
+    const role =
+      (system.split("\n", 1)[0].match(/^selfqa-role:\s*(\S+)/) ?? [])[1] ?? "";
+    const userText = req.messages.map((m) => m.content).join("\n");
 
-    if (system.includes("build-agent")) {
+    if (role === "build-agent") {
       return {
         text: serializeFileBlocks(CANNED_TODO_APP),
         stopReason: "end_turn",
       };
     }
 
-    if (system.includes("edit-agent")) {
+    if (role === "edit-agent") {
       // Deterministic, visible change: flip the todo title text.
       const page = CANNED_TODO_APP.find((f) => f.path === "src/app/page.tsx");
       const edited = page
@@ -226,7 +232,7 @@ export class StubProvider implements LLMProvider {
       };
     }
 
-    if (system.includes("spec-extractor")) {
+    if (role === "spec-extractor") {
       return {
         text: JSON.stringify({
           assertion: {
@@ -244,8 +250,20 @@ export class StubProvider implements LLMProvider {
       };
     }
 
+    if (role === "mission-deriver") {
+      const informed = userText.includes("MODE: informed");
+      return {
+        text: JSON.stringify(
+          informed ? STUB_INFORMED_MISSIONS : STUB_COLD_MISSIONS,
+        ),
+        stopReason: "end_turn",
+      };
+    }
+
     throw new Error(
-      "StubProvider: no canned response for this request (system marker not recognized)",
+      "StubProvider: unrecognized role " +
+        JSON.stringify(role) +
+        " (expected a 'selfqa-role:' marker on line 1)",
     );
   }
 }
