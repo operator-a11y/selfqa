@@ -52,7 +52,8 @@ refuses to guess*.
    review, not a 30-minute crawl. Click any step to comment.
 4. **Fix** — your comment becomes the tuple above; the agent edits the code and
    re-walks only what your change touched, proving the deterministic assertion flips
-   **fail → pass**. On your approval the fixed mission becomes a **permanent regression
+   **false → true** (moving that mission's verdict from *ambiguous* to *pass*). On your
+   approval the fixed mission becomes a **permanent regression
    test** — a frozen mission replayed through the *same* checker on every later build,
    so it can never silently regress — and a **run-to-run diff** shows what newly
    passes, newly fails, or changed. A **four-metric dashboard** tracks the loop's
@@ -77,9 +78,10 @@ end-to-end with **no API key** (a deterministic **stub** provider; set
 `ANTHROPIC_API_KEY` for real codegen — the provider is one swappable interface, SPEC
 §15). The win condition, proven in one uninterrupted test (`verify-loop-e2e`):
 
-> build → walk → a **reached-but-failing** mission → step-anchored comment → the
-> **5-leg grounded tuple** → codegen **consumes the typed assertion** → re-walk
-> **replays + re-asserts** → the deterministic assertion **flips fail → pass** →
+> build → walk → a **reached-but-ambiguous** mission (its typed assertion is cleanly
+> false) → step-anchored comment → the **5-leg grounded tuple** → codegen **consumes
+> the typed assertion** → re-walk **replays + re-asserts** → the assertion **flips
+> false → true**, moving the verdict **ambiguous → pass** →
 > promote → it **appears in the run diff** → it's **remembered as a frozen regression
 > test** and re-checked on every later build → **durable across a worker restart**,
 > with **zero LLM on the hot path**.
@@ -95,9 +97,12 @@ What's built, each gated by a `scripts/verify-*.ts` script:
 | **Durable metadata** (`node:sqlite`) — runs/verdicts/comments/regressions survive a restart | `persist/` |
 | **Four-metric dashboard** (det:semantic ≥80%, recompile rate, everything-bucket fraction, attempts histogram) | `metrics/`, the Metrics tab |
 | **Per-lane DB isolation** — stable-slot pool, restore-to-seed runner, the §9.3 gate (primitive + end-to-end) | `walk/`, `runner/app-runner.ts` |
+| **Coverage** (optional, supplementary) — a light crawl beyond the missions, cheap-deduped (route + skeleton), suspicion flagged mechanically | `coverage/`, the Coverage tab |
 
 - **[SPEC.md](./SPEC.md)** — what SelfQA is and why it's shaped the way it is.
 - **[PLAN.md](./PLAN.md)** — the 8-milestone build path (with the as-built status).
+- **[ESSAY.md](./ESSAY.md)** — the thesis, the novelty, and what is deliberately *not* claimed.
+- **[DEMO.md](./DEMO.md)** — the 90-second hero storyboard; `npm run demo` reproduces it.
 
 ### Running locally
 
@@ -123,10 +128,11 @@ npm run build && npm run start            # the SelfQA review UI (production)
 
 ### Verifying
 
-One command runs typecheck + lint + every `verify-*` script:
+See the whole loop narrate itself end-to-end (no API key, ~30–60s), then verify it:
 
 ```bash
-npm run verify:fast    # ~20 no-browser checks (deterministic, no API key, seconds)
+npm run demo           # narrated hero loop: build → walk → comment → flip → promote → restart-survives
+npm run verify:fast    # ~21 no-browser checks (deterministic, no API key, seconds)
 npm run verify:all     # the above + real-Chromium / build-driven gates (minutes)
 ```
 

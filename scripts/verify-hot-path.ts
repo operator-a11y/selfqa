@@ -1,13 +1,15 @@
 /**
  * M3-D — hot-path enforcement (SPEC §6.3), belt-and-suspenders to the eslint
  * no-restricted-imports rule. Asserts harness/* and walk/* import ZERO provider
- * code, so an LLM call can never sneak into the replay/settling loop.
+ * code, so an LLM call can never sneak into the replay/settling loop. coverage/*
+ * (the M7 light crawl) is held to the same no-provider rule — its suspicion flags
+ * must stay mechanical, never an LLM verdict.
  * Run: `npx tsx scripts/verify-hot-path.ts`.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-const ROOTS = ["src/lib/core/harness", "src/lib/core/walk"];
+const ROOTS = ["src/lib/core/harness", "src/lib/core/walk", "src/lib/core/coverage"];
 const FORBIDDEN: { re: RegExp; why: string }[] = [
   { re: /from\s+["'][^"']*\/provider(\/|["'])/, why: "imports a provider module" },
   { re: /@anthropic-ai\/sdk/, why: "imports the Anthropic SDK" },

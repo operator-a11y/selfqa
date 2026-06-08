@@ -79,6 +79,21 @@ interface RegressionT {
   frozenVerdict: string;
 }
 
+interface CoverageStateT {
+  route: string;
+  url: string;
+  via: string;
+  suspicious: boolean;
+  reason: string;
+}
+interface CoverageT {
+  statesSeen: number;
+  suspicious: number;
+  duplicatesFolded: number;
+  headline: string;
+  states: CoverageStateT[];
+}
+
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 
 const artifactUrl = (p: string) => `/api/artifact?path=${encodeURIComponent(p)}`;
@@ -104,8 +119,10 @@ export default function Home() {
   const [app, setApp] = useState<BuildResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [tab, setTab] = useState<"review" | "explore" | "metrics">("review");
+  const [tab, setTab] = useState<"review" | "explore" | "metrics" | "coverage">("review");
   const [metrics, setMetrics] = useState<MetricsT | null>(null);
+  const [coverage, setCoverage] = useState<CoverageT | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
 
   // review state
   const [walking, setWalking] = useState(false);
@@ -205,6 +222,20 @@ export default function Home() {
       if (res.ok) setMetrics(data as MetricsT);
     } catch {
       /* ignore */
+    }
+  }
+
+  async function fetchCoverage() {
+    if (!app) return;
+    setCoverageLoading(true);
+    try {
+      const res = await fetch(`/api/coverage?appId=${encodeURIComponent(app.appId)}`);
+      const data = await res.json();
+      if (res.ok) setCoverage(data as CoverageT);
+    } catch {
+      /* ignore */
+    } finally {
+      setCoverageLoading(false);
     }
   }
 
@@ -327,6 +358,16 @@ export default function Home() {
               data-testid="tab-metrics"
             >
               Metrics
+            </button>
+            <button
+              onClick={() => {
+                setTab("coverage");
+                if (!coverage) void fetchCoverage();
+              }}
+              className={`rounded px-3 py-1.5 ${tab === "coverage" ? "bg-black text-white" : "bg-gray-200"}`}
+              data-testid="tab-coverage"
+            >
+              Coverage
             </button>
           </div>
         )}
@@ -513,6 +554,43 @@ export default function Home() {
                       {metrics.attempts.resolved}/{metrics.attempts.total} resolved within the cap
                     </div>
                   </div>
+                </div>
+              )}
+            </div>
+          ) : tab === "coverage" ? (
+            <div className="h-full overflow-y-auto p-6" data-testid="coverage-panel">
+              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-500">
+                Coverage <span className="text-gray-400">· supplementary to the mission list</span>
+              </div>
+              {coverageLoading ? (
+                <div className="text-sm text-gray-500">Crawling a few states beyond your missions…</div>
+              ) : !coverage ? (
+                <button onClick={() => void fetchCoverage()} className="rounded bg-gray-200 px-3 py-1.5 text-sm" data-testid="coverage-run">
+                  Run a light coverage crawl
+                </button>
+              ) : (
+                <div className="max-w-2xl">
+                  <p className="text-sm text-gray-800" data-testid="coverage-headline">{coverage.headline}</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {coverage.statesSeen} distinct state{coverage.statesSeen === 1 ? "" : "s"} ·{" "}
+                    {coverage.duplicatesFolded} structural duplicate{coverage.duplicatesFolded === 1 ? "" : "s"} folded · cheap dedup (route + skeleton)
+                  </p>
+                  <div className="mt-3 flex flex-col gap-1">
+                    {coverage.states.map((s, i) => (
+                      <div
+                        key={i}
+                        className={`rounded border p-2 text-xs ${s.suspicious ? "border-amber-300 bg-amber-50" : "border-gray-200 bg-white"}`}
+                        data-testid="coverage-row"
+                      >
+                        <span className="font-mono text-gray-700">{s.route}</span>{" "}
+                        <span className="text-gray-400">via {s.via}</span>
+                        {s.suspicious && <span className="ml-1 text-amber-700">· suspicious: {s.reason}</span>}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-gray-400">
+                    Not a verdict — the reviewable artifact is the mission list + run-to-run diff. This panel only points at states worth a glance.
+                  </p>
                 </div>
               )}
             </div>

@@ -55,6 +55,10 @@ import {
   commentLoopTerminated,
 } from "../src/lib/core/metrics/events";
 import { aggregateMetrics } from "../src/lib/core/metrics/aggregate";
+import { crawlBeyondMissions } from "../src/lib/core/coverage/crawl";
+import { buildCoverageReport, coverageHeadline } from "../src/lib/core/coverage/report";
+import { stateKey } from "../src/lib/core/coverage/skeleton";
+import { normalizeRoute } from "../src/lib/core/verify/manifest";
 import type { CommentType, RunRecord, RegressionTest } from "../src/lib/core/domain/types";
 
 const PORT = Number(process.env.SELFQA_WORKER_PORT ?? 4317);
@@ -194,6 +198,30 @@ const server = http.createServer(async (req, res) => {
       const appId = url.searchParams.get("appId") ?? "";
       const status = url.searchParams.get("status") as RegressionTest["status"] | null;
       return sendJson(res, 200, { tests: store.listRegressionTests(appId, status ? { status } : undefined) });
+    }
+
+    if (req.method === "GET" && pathname === "/api/coverage") {
+      // M7 (OPTIONAL, SPEC §17): a light crawl beyond the missions, cheap-deduped,
+      // suspicion flagged mechanically. Supplementary — the verdict list is the headline.
+      const appId = url.searchParams.get("appId") ?? "";
+      const built = apps.get(appId);
+      if (!built) return sendJson(res, 404, { error: "unknown appId" });
+      // require a mission baseline — "beyond your missions" is meaningless without one.
+      const run = runs.get(appId);
+      if (!run) return sendJson(res, 400, { error: "run /api/walk before requesting coverage" });
+      // mission-seen state keys (terminal DOM of each mission) -> excluded from "beyond".
+      const missionKeys = new Set<string>();
+      for (const m of run.missions) {
+        const last = m.trace.steps[m.trace.steps.length - 1];
+        if (!last) continue;
+        const html = await fs.readFile(last.dom, "utf8").catch(() => "");
+        if (html) missionKeys.add(stateKey(normalizeRoute(m.trace.terminalUrl), html));
+      }
+      const browser = await getBrowser();
+      const raw = await crawlBeyondMissions({ browser, baseUrl: built.running.url });
+      const report = buildCoverageReport(raw, { missionKeys });
+      console.log(`[worker] coverage ${appId}: ${coverageHeadline(report)}`);
+      return sendJson(res, 200, { ...report, headline: coverageHeadline(report) });
     }
 
     if (req.method === "GET" && pathname === "/api/artifact") {

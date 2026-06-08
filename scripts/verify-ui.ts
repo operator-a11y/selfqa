@@ -102,6 +102,13 @@ async function main(): Promise<void> {
     truthy("det:semantic card reports a deterministic % (" + dsText.replace(/\s+/g, " ").trim().slice(0, 40) + ")", /deterministic/.test(dsText) && /%/.test(dsText));
     truthy("attempts histogram card shows", await ok(page.getByTestId("metric-attempts").waitFor({ timeout: 10000 })));
 
+    // M7 (optional): the supplementary coverage crawl surfaces states beyond the missions.
+    await page.getByTestId("tab-coverage").click();
+    truthy("coverage panel renders", await ok(page.getByTestId("coverage-panel").waitFor({ timeout: 10000 })));
+    truthy("coverage headline appears after the crawl", await ok(page.getByTestId("coverage-headline").waitFor({ timeout: 60000 })));
+    const covText = (await page.getByTestId("coverage-headline").textContent()) ?? "";
+    truthy("coverage is framed as beyond-missions (" + covText.trim().slice(0, 48) + ")", /beyond your missions/.test(covText));
+
     await closeBrowser();
   } finally {
     for (const p of [worker, selfqa]) {

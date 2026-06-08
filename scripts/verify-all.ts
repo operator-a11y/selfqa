@@ -29,6 +29,7 @@ const FAST = [
   "verify-diff",
   "verify-regression",
   "verify-db-isolation",
+  "verify-coverage",
 ];
 const HEAVY = [
   "verify-action-capture",
