@@ -77,11 +77,51 @@ interface BuiltApp {
 }
 const apps = new Map<string, BuiltApp>();
 const runs = new Map<string, RunRecord>();
+// A walk runs in the BACKGROUND (it can take minutes on the real provider, far
+// longer than an HTTP client holds a connection), so /api/walk returns immediately
+// and the UI polls /api/missions. This tracks the in-flight/failed state.
+const walkState = new Map<string, { state: "running" | "error"; error?: string }>();
 
 let counter = 0;
 function newId(prefix: string): string {
   counter += 1;
   return prefix + "-" + Date.now().toString(36) + "-" + counter;
+}
+
+/** Walk an app's missions to completion. NEVER rejects — stores the run + clears
+ *  walkState on success, or records walkState=error and returns the message. */
+async function runWalk(appId: string, built: BuiltApp): Promise<{ run?: RunRecord; error?: string }> {
+  try {
+    const browser = await getBrowser();
+    const buildSha = await currentSha(built.repo.dir);
+    // SPEC §9.3: a db-file-copy app is forced to concurrency 1 until the
+    // verify-db-e2e gate flips parallelDbVerdictsTrusted (M5-F-INT safety rail).
+    const fixtures = await loadFixtures(built.repo.dir).catch(() => null);
+    const snapshotRestoreKind = fixtures?.snapshotRestore.kind ?? "none";
+    console.log(`[worker] walk ${appId} (sha ${buildSha}, isolation ${snapshotRestoreKind})`);
+    const run = await runMissions({
+      provider,
+      browser,
+      iso,
+      baseUrl: built.running.url,
+      runId: newId("run"),
+      appId,
+      app: built.app,
+      buildSha,
+      snapshotRestoreKind,
+      parallelDbVerdictsTrusted: store.getParallelDbVerdictsTrusted(),
+    });
+    runs.set(appId, run);
+    store.saveRun(run);
+    walkState.delete(appId);
+    console.log(`[worker] walk ${appId}: ${run.missions.length} missions`);
+    return { run };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    console.error(`[worker] walk ${appId} failed: ${error}`);
+    walkState.set(appId, { state: "error", error });
+    return { error };
+  }
 }
 
 function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
@@ -143,29 +183,26 @@ const server = http.createServer(async (req, res) => {
       const appId = String(body.appId ?? "");
       const built = apps.get(appId);
       if (!built) return sendJson(res, 404, { error: "unknown appId" });
-      const browser = await getBrowser();
-      const buildSha = await currentSha(built.repo.dir);
-      // SPEC §9.3: a db-file-copy app is forced to concurrency 1 until the
-      // verify-db-e2e gate flips parallelDbVerdictsTrusted (M5-F-INT safety rail).
-      const fixtures = await loadFixtures(built.repo.dir).catch(() => null);
-      const snapshotRestoreKind = fixtures?.snapshotRestore.kind ?? "none";
-      console.log(`[worker] walk ${appId} (sha ${buildSha}, isolation ${snapshotRestoreKind})`);
-      const run = await runMissions({
-        provider,
-        browser,
-        iso,
-        baseUrl: built.running.url,
-        runId: newId("run"),
-        appId,
-        app: built.app,
-        buildSha,
-        snapshotRestoreKind,
-        parallelDbVerdictsTrusted: store.getParallelDbVerdictsTrusted(),
-      });
-      runs.set(appId, run);
-      store.saveRun(run);
-      console.log(`[worker] walk ${appId}: ${run.missions.length} missions`);
-      return sendJson(res, 200, run);
+      if (walkState.get(appId)?.state === "running") {
+        return sendJson(res, 202, { appId, state: "running" }); // already walking
+      }
+      walkState.set(appId, { state: "running" });
+      // Run the walk in the BACKGROUND (never rejects — records its own state).
+      const walkDone = runWalk(appId, built);
+      // Give a FAST walk (the stub; the verify suite) a chance to finish inline so
+      // those callers still get the run synchronously. A slow real-provider walk
+      // outlasts the grace window -> we return 202 and the UI polls /api/missions.
+      const graceMs = Number(process.env.SELFQA_WALK_GRACE_MS ?? 120_000);
+      const settled = await Promise.race([
+        walkDone,
+        new Promise<null>((r) => setTimeout(() => r(null), graceMs)),
+      ]);
+      if (settled) {
+        return settled.run
+          ? sendJson(res, 200, settled.run)
+          : sendJson(res, 500, { error: settled.error ?? "walk failed" });
+      }
+      return sendJson(res, 202, { appId, state: "running" });
     }
 
     if (req.method === "GET" && pathname === "/api/missions") {
@@ -173,8 +210,12 @@ const server = http.createServer(async (req, res) => {
       // In-memory live copy first; fall back to the durable store so review
       // survives a worker restart even when the app subprocess is gone (M5-K).
       const run = runs.get(appId) ?? store.getRun(appId) ?? undefined;
-      if (!run) return sendJson(res, 404, { error: "no run for appId" });
-      return sendJson(res, 200, run);
+      if (run) return sendJson(res, 200, run);
+      // No run yet: report the background walk's state so the UI knows whether to
+      // keep polling (running), stop (error), or that nothing was started (none).
+      const st = walkState.get(appId);
+      if (st) return sendJson(res, 200, { state: st.state, error: st.error });
+      return sendJson(res, 404, { error: "no run for appId" });
     }
 
     if (req.method === "GET" && pathname === "/api/metrics") {

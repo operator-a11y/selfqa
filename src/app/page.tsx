@@ -184,20 +184,38 @@ export default function Home() {
   async function runMissions() {
     if (!app) return;
     setWalking(true);
-    setStatus("Deriving + walking missions…");
+    setError(null);
+    setStatus("Deriving + walking missions… (on the real provider this can take a few minutes)");
     setRun(null);
     setSelectedMission(null);
     try {
+      // The walk runs in the BACKGROUND on the worker (it can take minutes) — kick
+      // it off, then poll /api/missions until the run is ready. No long-held
+      // connection to time out.
       const res = await fetch("/api/walk", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ appId: app.appId }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "walk failed");
-      setRun(data as RunT);
-      setSelectedMission((data as RunT).missions[0]?.mission.id ?? null);
-      setStatus(null);
+      const started = await res.json();
+      if (!res.ok) throw new Error(started.error ?? "walk failed");
+
+      const deadline = Date.now() + 15 * 60 * 1000; // generous cap for the real provider
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const m = await fetch(`/api/missions?appId=${encodeURIComponent(app.appId)}`)
+          .then((r) => r.json())
+          .catch(() => null);
+        if (m && Array.isArray(m.missions)) {
+          setRun(m as RunT);
+          setSelectedMission((m as RunT).missions[0]?.mission.id ?? null);
+          setStatus(null);
+          return;
+        }
+        if (m && m.state === "error") throw new Error("walk failed: " + (m.error ?? "unknown error"));
+        if (Date.now() > deadline) throw new Error("walk timed out after 15 min");
+        setStatus("Walking missions… (real provider — still going)");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -210,7 +228,7 @@ export default function Home() {
     try {
       const res = await fetch(`/api/missions?appId=${encodeURIComponent(app.appId)}`);
       const data = await res.json();
-      if (res.ok) setRun(data as RunT);
+      if (res.ok && Array.isArray(data.missions)) setRun(data as RunT);
     } catch {
       /* ignore */
     }
