@@ -11,7 +11,7 @@
 import type { LLMProvider } from "../provider/types";
 import type { Mission } from "../domain/types";
 import type { GeneratedFile } from "./protocol";
-import { DerivedMissionsSchema, extractJson } from "./schema";
+import { DerivedMissionsSchema, extractJson, coerceAssertion } from "./schema";
 import {
   MISSION_DERIVER_SYSTEM_PROMPT,
   missionDeriverUserPrompt,
@@ -45,7 +45,25 @@ export async function deriveMissions(
     temperature: 0,
   });
 
-  const parsed = DerivedMissionsSchema.parse(JSON.parse(extractJson(res.text)));
+  // Normalize each acceptance criterion BEFORE strict validation: a real model
+  // invents predicate kinds / boolean `expected`, which would otherwise crash the
+  // whole batch. coerceAssertion degrades any non-conforming deterministic
+  // predicate to semantic (P1). Missions with no usable criteria get one semantic.
+  const rawObj = JSON.parse(extractJson(res.text)) as { missions?: unknown[]; reusedIds?: unknown };
+  const normalized = {
+    reusedIds: rawObj.reusedIds,
+    missions: Array.isArray(rawObj.missions)
+      ? rawObj.missions.map((mUnknown) => {
+          const m = (mUnknown ?? {}) as { acceptanceCriteria?: unknown[]; description?: unknown };
+          const criteria = Array.isArray(m.acceptanceCriteria) && m.acceptanceCriteria.length
+            ? m.acceptanceCriteria.map(coerceAssertion)
+            : [{ type: "semantic" as const, nl: typeof m.description === "string" ? m.description : "works as intended" }];
+          return { ...m, acceptanceCriteria: criteria };
+        })
+      : [],
+  };
+
+  const parsed = DerivedMissionsSchema.parse(normalized);
   const missions = parsed.missions as Mission[];
 
   const ids = missions.map((m) => m.id);

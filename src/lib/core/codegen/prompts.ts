@@ -102,10 +102,17 @@ From the app prompt + code, derive 8-15 named user missions. Each mission is:
 
 Rules:
 - intendedSteps are NATURAL-LANGUAGE intent only — never selectors (P2).
-- acceptanceCriteria are typed exactly like comment assertions (SPEC §6.1):
-  deterministic {type,predicate:{kind,selector?,expected?},nl} or semantic {type,nl}.
-- Do NOT invent fake-precise deterministic predicates; if a check needs taste, mark
-  it semantic (P1). Prefer deterministic only where it is truly mechanical.
+- acceptanceCriteria are typed assertions, ONE of:
+  deterministic: {"type":"deterministic","predicate":{"kind":K,"selector"?:string,"expected"?:string|number},"nl":string}
+  semantic:      {"type":"semantic","nl":string}
+- K (predicate.kind) MUST be EXACTLY one of these seven — never anything else:
+  "http-status" | "url-equals" | "element-visible" | "element-absent" |
+  "text-equals" | "form-validation-blocks" | "console-error-absent".
+- "expected" MUST be a string or a number — NEVER a boolean, object, or array.
+  element-visible / element-absent / form-validation-blocks / console-error-absent
+  take NO "expected" (their selector being visible/absent IS the check).
+- If a check needs ANY other kind, or needs taste, use a SEMANTIC assertion — do
+  NOT invent a kind or fake a precise predicate (P1). Deterministic only where truly mechanical.
 - Cover happy paths, empty/invalid input, and at least one adversarial/abuse mission.
 - On an INFORMED run, propose NET-NEW missions only and list the existing ids in reusedIds.
 - Output ONLY JSON: {"missions":[...],"reusedIds":[...]}. No prose, no fences.`;

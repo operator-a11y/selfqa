@@ -9,19 +9,13 @@
  *
  * Server-intended (drives an LLMProvider).
  */
-import { z } from "zod";
 import type { LLMProvider } from "../provider/types";
 import type { Assertion } from "../domain/types";
-import { AssertionSchema, extractJson } from "./schema";
+import { coerceAssertion, extractJson } from "./schema";
 import {
   SPEC_EXTRACTOR_SYSTEM_PROMPT,
   specExtractorUserPrompt,
 } from "./prompts";
-
-const SpecSchema = z.object({
-  assertion: AssertionSchema,
-  clarifyingQuestion: z.string().nullable().optional(),
-});
 
 export interface ExtractedSpec {
   assertion: Assertion;
@@ -39,9 +33,12 @@ export async function extractSpec(
     temperature: 0,
   });
 
-  const parsed = SpecSchema.parse(JSON.parse(extractJson(res.text)));
+  // Coerce instead of strict-parse: a real model may emit a predicate kind outside
+  // the whitelist or a boolean `expected` — coerceAssertion degrades that to a
+  // semantic assertion (P1) rather than throwing on the user's comment.
+  const obj = JSON.parse(extractJson(res.text)) as { assertion?: unknown; clarifyingQuestion?: unknown };
   return {
-    assertion: parsed.assertion as Assertion,
-    clarifyingQuestion: parsed.clarifyingQuestion ?? null,
+    assertion: coerceAssertion(obj.assertion) as Assertion,
+    clarifyingQuestion: typeof obj.clarifyingQuestion === "string" ? obj.clarifyingQuestion : null,
   };
 }

@@ -5,7 +5,7 @@
  * path returns hardcoded JSON that always validates, so it cannot catch a schema
  * regression. This can. Run: `npx tsx scripts/verify-schema.ts`.
  */
-import { AssertionSchema, MissionSchema } from "../src/lib/core/codegen/schema";
+import { AssertionSchema, MissionSchema, coerceAssertion } from "../src/lib/core/codegen/schema";
 import type { ZodTypeAny } from "zod";
 
 let failures = 0;
@@ -90,6 +90,28 @@ bad("mission: empty acceptanceCriteria", MissionSchema, {
   description: "d",
   intendedSteps: ["s"],
   acceptanceCriteria: [],
+});
+
+// coerceAssertion — robustness to a real model's creative output (never throws).
+function eq(name: string, a: unknown, b: unknown): void {
+  check(name, () => {
+    if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
+  });
+}
+// a valid deterministic assertion passes through unchanged.
+eq("coerce: valid deterministic passes through", coerceAssertion({ type: "deterministic", predicate: { kind: "text-equals", selector: "#t", expected: "x" }, nl: "n" }), { type: "deterministic", predicate: { kind: "text-equals", selector: "#t", expected: "x" }, nl: "n" });
+// an INVALID kind (the real-model bug) degrades to semantic, never throws.
+eq("coerce: invalid kind -> semantic", coerceAssertion({ type: "deterministic", predicate: { kind: "element-contains", selector: "#t", expected: "x" }, nl: "should contain x" }), { type: "semantic", nl: "should contain x" });
+// a boolean `expected` on a kind that needs none -> drop it, stay deterministic.
+eq("coerce: boolean expected on element-visible -> drop, stay deterministic", coerceAssertion({ type: "deterministic", predicate: { kind: "element-visible", selector: "#b", expected: true }, nl: "button visible" }), { type: "deterministic", predicate: { kind: "element-visible", selector: "#b" }, nl: "button visible" });
+// a boolean `expected` on a kind that REQUIRES one (text-equals) -> semantic.
+eq("coerce: boolean expected on text-equals -> semantic", coerceAssertion({ type: "deterministic", predicate: { kind: "text-equals", selector: "#t", expected: true }, nl: "title edited" }), { type: "semantic", nl: "title edited" });
+// a valid semantic passes through.
+eq("coerce: semantic passes through", coerceAssertion({ type: "semantic", nl: "looks nice" }), { type: "semantic", nl: "looks nice" });
+// total garbage -> a safe semantic (never throws).
+check("coerce: garbage -> safe semantic (no throw)", () => {
+  const c = coerceAssertion({ wat: 1 });
+  if (c.type !== "semantic" || !c.nl) throw new Error("expected a semantic fallback with nl");
 });
 
 if (failures) {

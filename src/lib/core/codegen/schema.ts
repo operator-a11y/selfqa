@@ -46,6 +46,50 @@ export const DerivedMissionsSchema = z.object({
   reusedIds: z.array(z.string()).default([]),
 });
 
+const VALID_KINDS = new Set([
+  "http-status",
+  "url-equals",
+  "element-visible",
+  "element-absent",
+  "text-equals",
+  "form-validation-blocks",
+  "console-error-absent",
+]);
+/** Kinds whose check is meaningless without a string/number `expected`. */
+const NEEDS_EXPECTED = new Set(["http-status", "url-equals", "text-equals"]);
+
+export type AssertionT = z.infer<typeof AssertionSchema>;
+
+/**
+ * Coerce a (possibly model-malformed) assertion into a SCHEMA-VALID one — never
+ * throws. A real LLM cheerfully invents predicate kinds outside the fixed
+ * whitelist or uses a boolean `expected`; rather than crash the whole batch, a
+ * non-conforming deterministic predicate DEGRADES to a semantic assertion. That
+ * is exactly SelfQA's own rule (P1): don't fake a precise mechanical check — if
+ * it doesn't fit the whitelist, it isn't mechanical, so mark it semantic.
+ */
+export function coerceAssertion(raw: unknown): AssertionT {
+  const direct = AssertionSchema.safeParse(raw);
+  if (direct.success) return direct.data;
+
+  const r = raw as { type?: unknown; predicate?: { kind?: unknown; selector?: unknown; expected?: unknown }; nl?: unknown };
+  const nl = typeof r?.nl === "string" && r.nl.trim() ? r.nl : "the result is correct";
+
+  if (r?.type === "deterministic" && r.predicate && typeof r.predicate.kind === "string" && VALID_KINDS.has(r.predicate.kind)) {
+    const kind = r.predicate.kind;
+    const exp = r.predicate.expected;
+    const expOk = typeof exp === "string" || typeof exp === "number";
+    if (!(NEEDS_EXPECTED.has(kind) && !expOk)) {
+      const predicate: Record<string, unknown> = { kind };
+      if (typeof r.predicate.selector === "string") predicate.selector = r.predicate.selector;
+      if (expOk) predicate.expected = exp;
+      const v = AssertionSchema.safeParse({ type: "deterministic", predicate, nl });
+      if (v.success) return v.data;
+    }
+  }
+  return { type: "semantic", nl };
+}
+
 /** Pull the outermost JSON object out of a possibly-chatty LLM response. */
 export function extractJson(text: string): string {
   const start = text.indexOf("{");
