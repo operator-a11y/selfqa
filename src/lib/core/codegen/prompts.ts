@@ -128,6 +128,10 @@ Rules:
   take NO "expected" (their selector being visible/absent IS the check).
 - If a check needs ANY other kind, or needs taste, use a SEMANTIC assertion — do
   NOT invent a kind or fake a precise predicate (P1). Deterministic only where truly mechanical.
+- Each mission is SELF-CONTAINED and starts from the app's INITIAL state — often
+  EMPTY (e.g. a list with no rows, a counter at 0). A mission that acts on data MUST
+  first create it: to "delete a task" the intendedSteps add a task, THEN delete it.
+  Never assume rows/records the initial load does not show.
 - Cover happy paths, empty/invalid input, and at least one adversarial/abuse mission.
 - On an INFORMED run, propose NET-NEW missions only and list the existing ids in reusedIds.
 - Output ONLY JSON: {"missions":[...],"reusedIds":[...]}. No prose, no fences.`;
@@ -177,8 +181,15 @@ the harness can replay. Each action:
 
 Rules:
 - Prefer data-testid targets (top of the selector ladder).
-- For list items, emit an UNAMBIGUOUS target (indexed/scoped) — never one that
-  matches many elements.
+- Emit the FULL action sequence the intendedSteps imply, INCLUDING setup: the app
+  starts in its INITIAL state (often empty), so CREATE any row/record the mission
+  acts on BEFORE acting on it (type + add an item before deleting/toggling it).
+- List items are keyed by a RUNTIME id you CANNOT know at compile time (e.g.
+  data-testid="button-delete-item-<id>"). NEVER emit an exact runtime id. Target the
+  first/only matching item via xpath starts-with, e.g.
+  {"strategy":"xpath","value":"(//*[starts-with(@data-testid,'button-delete-item-')])[1]"}.
+- For any other list item, emit an UNAMBIGUOUS target (indexed/scoped) — never one
+  that matches many elements.
 - Do NOT include the initial page load — the walker navigates first.
 - Output ONLY JSON: {"actions":[...]}. No prose, no fences.`;
 
