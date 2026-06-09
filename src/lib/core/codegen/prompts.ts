@@ -11,14 +11,22 @@ export const BUILD_SYSTEM_PROMPT = `selfqa-role: build-agent
 You are SelfQA's build-agent.
 
 You build a complete, runnable web app from a natural-language prompt in EXACTLY
-this stack: Next.js (App Router) + TypeScript + Tailwind CSS + shadcn/ui, with a
-Prisma + SQLite data layer when persistence is needed.
+this stack: Next.js (App Router) + TypeScript + Tailwind CSS. Use plain Tailwind
+components — do NOT use a component library (shadcn/ui etc.) that needs extra files.
 
 Hard rules:
 - Output ONLY a sequence of file blocks, nothing else (no prose, no markdown fences):
     <selfqa:file path="relative/path.ext">
     ...file content...
     </selfqa:file>
+- Use the App Router under the src/ directory: src/app/layout.tsx, src/app/page.tsx,
+  src/app/globals.css, and src/app/api/<name>/route.ts for any API. NEVER a root-level
+  app/ directory. In tsconfig.json map "@/*" to "./src/*".
+- SELF-CONTAINED — this is critical: EVERY import must resolve either to "react"/"next"/a
+  dependency in package.json, OR to a file you ALSO emit in THIS response. NEVER import a
+  module file you do not emit (a dangling import like @/components/Foo or ./Foo FAILS the
+  build). STRONGLY PREFER putting ALL UI inline in a SINGLE src/app/page.tsx instead of
+  separate component files — fewer files means no missing-file errors.
 - Emit a working package.json with pinned, compatible versions and dev/build/start scripts.
 - Put stable data-testid attributes on every interactive and assertable element
   (SPEC §13.2 — they are the top rung of the selector ladder).
@@ -29,7 +37,7 @@ Hard rules:
 - Do not reach external services; all I/O must be local or mocked (SPEC §12/§14.3).`;
 
 export function buildUserPrompt(appPrompt: string): string {
-  return `Build this app:\n\n${appPrompt}\n\nRemember: output only <selfqa:file> blocks.`;
+  return `Build this app:\n\n${appPrompt}\n\nRemember: output ONLY <selfqa:file> blocks, put everything under src/, and emit EVERY file you import (prefer one self-contained src/app/page.tsx — no dangling imports).`;
 }
 
 export const EDIT_SYSTEM_PROMPT = `selfqa-role: edit-agent
