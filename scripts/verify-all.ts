@@ -24,6 +24,7 @@ const FAST = [
   "verify-semantic-verdict",
   "verify-gate",
   "verify-converge",
+  "verify-informed-run",
   "verify-persist",
   "verify-metrics",
   "verify-diff",

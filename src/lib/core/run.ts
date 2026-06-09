@@ -62,6 +62,53 @@ export function missionRunFromWalked(
   return mr;
 }
 
+/**
+ * Assemble the full plan set for a run (SPEC §7.1 / §7.5). COLD when nothing is
+ * carried: the deriver returns the whole 8-15 suite. INFORMED when prior missions
+ * are carried forward: the deriver is handed them as `existingMissions` (+ frozen
+ * regression tests) and returns NET-NEW missions only, which are compiled fresh and
+ * APPENDED. Carried missions keep their already-compiled actions VERBATIM — stable
+ * id, no recompile, so no provider drift — which is what lets a re-run ACCRETE
+ * coverage for just-added features instead of regenerating the suite from scratch
+ * (a cold re-derive would also scramble the stable ids the run-diff matches on).
+ */
+export async function assembleRunPlans(
+  provider: LLMProvider,
+  args: {
+    app: GeneratedApp;
+    /** prior run's missions to keep verbatim (mission + its compiled actions). */
+    carryForward?: MissionPlan[];
+    /** active frozen regression tests, so the deriver never re-proposes a frozen id. */
+    frozenRegressionTests?: Mission[];
+  },
+): Promise<MissionPlan[]> {
+  const carry = args.carryForward ?? [];
+  const existingMissions = carry.map((p) => p.mission);
+
+  const { missions: derived } = await deriveMissions(provider, {
+    appPrompt: args.app.prompt,
+    files: args.app.files,
+    existingMissions: existingMissions.length ? existingMissions : undefined,
+    frozenRegressionTests: args.frozenRegressionTests?.length
+      ? args.frozenRegressionTests
+      : undefined,
+  });
+
+  // Compile ONLY the net-new missions; carried ones reuse their stored actions.
+  // Dedup by id (a carried id always wins) — belt-and-suspenders; the deriver
+  // already throws if an informed run re-proposes a kept id (SPEC §7.5).
+  const carriedIds = new Set(existingMissions.map((m) => m.id));
+  const netNewPlans: MissionPlan[] = [];
+  for (const m of derived) {
+    if (carriedIds.has(m.id)) continue;
+    netNewPlans.push({
+      mission: m,
+      actions: await compileSequence(provider, m, args.app.files),
+    });
+  }
+  return [...carry, ...netNewPlans];
+}
+
 export async function runMissions(args: {
   provider: LLMProvider;
   browser: Browser;
@@ -74,26 +121,28 @@ export async function runMissions(args: {
   concurrency?: number;
   /** re-walk scope (SPEC §8.3); absent = walk all (M4 behavior unchanged) */
   missionIds?: string[];
+  /**
+   * INFORMED re-run (SPEC §7.5): prior-run missions carried forward verbatim, so the
+   * deriver proposes NET-NEW missions only and this run ACCRETES them onto the kept
+   * set. Absent/empty => a COLD run that derives the whole suite (M4 behavior).
+   */
+  carryForward?: MissionPlan[];
+  /** active frozen regression tests handed to the deriver (never re-proposed). */
+  frozenRegressionTests?: Mission[];
   /** SPEC §9.3: db-file-copy + untrusted -> forced to concurrency 1 (M5-F-INT) */
   snapshotRestoreKind?: "db-file-copy" | "none";
   parallelDbVerdictsTrusted?: boolean;
 }): Promise<RunRecord> {
-  const { missions } = await deriveMissions(args.provider, {
-    appPrompt: args.app.prompt,
-    files: args.app.files,
+  const allPlans = await assembleRunPlans(args.provider, {
+    app: args.app,
+    carryForward: args.carryForward,
+    frozenRegressionTests: args.frozenRegressionTests,
   });
 
+  // re-walk scope filter (SPEC §8.3) applies to the full carried + net-new set.
   const selected = args.missionIds
-    ? missions.filter((m) => args.missionIds!.includes(m.id))
-    : missions;
-
-  const plans: MissionPlan[] = [];
-  for (const m of selected) {
-    plans.push({
-      mission: m,
-      actions: await compileSequence(args.provider, m, args.app.files),
-    });
-  }
+    ? allPlans.filter((p) => args.missionIds!.includes(p.mission.id))
+    : allPlans;
 
   const concurrency = effectiveConcurrency(
     args.concurrency ?? 4,
@@ -105,12 +154,12 @@ export async function runMissions(args: {
     args.iso,
     args.baseUrl,
     args.runId,
-    plans,
+    selected,
     concurrency,
   );
 
   const runs: MissionRun[] = walked.map((w, i) =>
-    missionRunFromWalked(plans[i].mission, w, args.buildSha),
+    missionRunFromWalked(selected[i].mission, w, args.buildSha),
   );
 
   runs.sort((a, b) => rankVerdict(a.verdict.status) - rankVerdict(b.verdict.status));

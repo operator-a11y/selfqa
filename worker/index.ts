@@ -99,7 +99,23 @@ async function runWalk(appId: string, built: BuiltApp): Promise<{ run?: RunRecor
     // verify-db-e2e gate flips parallelDbVerdictsTrusted (M5-F-INT safety rail).
     const fixtures = await loadFixtures(built.repo.dir).catch(() => null);
     const snapshotRestoreKind = fixtures?.snapshotRestore.kind ?? "none";
-    console.log(`[worker] walk ${appId} (sha ${buildSha}, isolation ${snapshotRestoreKind})`);
+    // INFORMED re-run (SPEC §7.5): carry the prior run's missions forward verbatim
+    // (stable id + reused compiled actions) so a re-walk ACCRETES net-new missions
+    // for just-added features instead of regenerating the suite from scratch. Stable
+    // ids are also what make the run-to-run diff meaningful (it matches on id).
+    const prior = runs.get(appId) ?? store.getRun(appId) ?? undefined;
+    const carryForward = prior?.missions.map((m) => ({
+      mission: m.mission,
+      actions: m.trace.actions ?? [],
+    }));
+    const frozenRegressionTests = store
+      .listRegressionTests(appId, { status: "active" })
+      .map((t) => t.mission);
+    console.log(
+      `[worker] walk ${appId} (sha ${buildSha}, isolation ${snapshotRestoreKind}, ` +
+        (carryForward?.length ? `carrying ${carryForward.length} prior mission(s)` : "cold") +
+        `)`,
+    );
     const run = await runMissions({
       provider,
       browser,
@@ -109,6 +125,8 @@ async function runWalk(appId: string, built: BuiltApp): Promise<{ run?: RunRecor
       appId,
       app: built.app,
       buildSha,
+      carryForward,
+      frozenRegressionTests,
       snapshotRestoreKind,
       parallelDbVerdictsTrusted: store.getParallelDbVerdictsTrusted(),
     });

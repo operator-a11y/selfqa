@@ -33,6 +33,7 @@
     "verify:rewalk": "tsx scripts/verify-rewalk.ts",
     "verify:gate": "tsx scripts/verify-gate.ts",
     "verify:converge": "tsx scripts/verify-converge.ts",
+    "verify:informed-run": "tsx scripts/verify-informed-run.ts",
     "verify:persist": "tsx scripts/verify-persist.ts",
     "verify:metrics": "tsx scripts/verify-metrics.ts",
     "verify:diff": "tsx scripts/verify-diff.ts",
