@@ -20,6 +20,11 @@ import {
   STUB_COLD_MISSIONS,
   STUB_INFORMED_MISSIONS,
 } from "../src/lib/core/provider/stub-missions";
+import type {
+  LLMProvider,
+  LLMCompletionRequest,
+  LLMCompletionResult,
+} from "../src/lib/core/provider/types";
 
 let failures = 0;
 function truthy(name: string, cond: boolean): void {
@@ -27,6 +32,39 @@ function truthy(name: string, cond: boolean): void {
   else {
     failures++;
     console.error("FAIL " + name);
+  }
+}
+
+/**
+ * A messy real model stand-in: it re-proposes an EXISTING cold id (a collision)
+ * alongside one genuinely net-new id in informed mode — everything else delegates to
+ * the deterministic stub. Proves the deriver DROPS the collision instead of crashing.
+ */
+class CollidingInformedProvider implements LLMProvider {
+  readonly name = "colliding-informed";
+  constructor(private base: StubProvider) {}
+  async complete(req: LLMCompletionRequest): Promise<LLMCompletionResult> {
+    const role = (req.system ?? "").split("\n", 1)[0];
+    const userText = req.messages.map((m) => m.content).join("\n");
+    if (role.includes("mission-deriver") && userText.includes("MODE: informed")) {
+      return {
+        text: JSON.stringify({
+          missions: [
+            STUB_COLD_MISSIONS.missions[0], // COLLISION: re-proposes an existing id
+            {
+              id: "mission-brand-new",
+              name: "Brand new",
+              description: "a genuinely net-new mission",
+              intendedSteps: ["do the new thing"],
+              acceptanceCriteria: [{ type: "semantic", nl: "the new thing works" }],
+            },
+          ],
+          reusedIds: [],
+        }),
+        stopReason: "end_turn",
+      };
+    }
+    return this.base.complete(req);
   }
 }
 
@@ -70,7 +108,7 @@ async function main(): Promise<void> {
   const reusedVerbatim = coldIds.every((id) => {
     const orig = cold.find((c) => c.mission.id === id);
     const carried = informed.find((c) => c.mission.id === id);
-    return !!orig && carried === orig && carried.actions === orig.actions;
+    return !!orig && !!carried && carried.actions === orig.actions;
   });
   truthy("carried missions reuse their compiled actions verbatim (no recompile)", reusedVerbatim);
 
@@ -85,6 +123,45 @@ async function main(): Promise<void> {
   truthy(
     "cold derivation is idempotent (stable ids run-to-run)",
     cold2.map((p) => p.mission.id).join(",") === coldIds.join(","),
+  );
+
+  // REAL-MODEL ROBUSTNESS: a messy model re-proposes an EXISTING id in informed mode.
+  // The deriver must DROP it (tolerant), not throw and crash the whole re-run.
+  const colliding = new CollidingInformedProvider(provider);
+  let threw = false;
+  let collidedPlans: Awaited<ReturnType<typeof assembleRunPlans>> = [];
+  try {
+    collidedPlans = await assembleRunPlans(colliding, { app, carryForward: cold });
+  } catch {
+    threw = true;
+  }
+  truthy("a re-proposed (colliding) id does NOT crash the re-run", !threw);
+  const collidedIds = collidedPlans.map((p) => p.mission.id);
+  truthy(
+    "the re-proposed existing id is DROPPED (not duplicated)",
+    collidedIds.filter((id) => id === STUB_COLD_MISSIONS.missions[0].id).length === 1,
+  );
+  truthy(
+    "the genuinely net-new id survives alongside the dropped collision",
+    collidedIds.includes("mission-brand-new"),
+  );
+  truthy(
+    "all carried missions are still preserved through a collision",
+    coldIds.every((id) => collidedIds.includes(id)),
+  );
+
+  // CARRY-FORWARD FOOTGUN: a carried mission with NO reusable actions (e.g. a prior
+  // UNREACHED mission) must be RECOMPILED, not silently walked as a degenerate no-op.
+  const target = cold.find((p) => p.mission.id === "mission-add-todo")!;
+  truthy("precondition: the target mission has a non-empty compiled sequence", target.actions.length > 0);
+  const recompiledPlans = await assembleRunPlans(provider, {
+    app,
+    carryForward: [{ mission: target.mission, actions: undefined }],
+  });
+  const recompiledBack = recompiledPlans.find((p) => p.mission.id === target.mission.id);
+  truthy(
+    "carried mission with absent actions is RECOMPILED (not left empty)",
+    !!recompiledBack && recompiledBack.actions.length > 0,
   );
 
   if (failures) {

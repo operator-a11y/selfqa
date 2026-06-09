@@ -146,8 +146,8 @@ export class SqliteStore implements MetadataStore {
     const sha = buildSha ?? this.latestSha(appId);
     if (!sha) return null;
     const hdr = this.db
-      .prepare(`SELECT 1 FROM run WHERE app_id=? AND build_sha=?`)
-      .get(appId, sha);
+      .prepare(`SELECT parent_sha FROM run WHERE app_id=? AND build_sha=?`)
+      .get(appId, sha) as { parent_sha: string | null } | undefined;
     if (!hdr) return null;
     const rows = this.db
       .prepare(`SELECT * FROM mission_run WHERE app_id=? AND build_sha=?`)
@@ -164,7 +164,11 @@ export class SqliteStore implements MetadataStore {
     }
     const rank = (s: string): number => (s === "fail" ? 0 : s === "ambiguous" ? 1 : 2);
     missions.sort((a, b) => rank(a.verdict.status) - rank(b.verdict.status));
-    return { appId, buildSha: sha, missions };
+    const out: RunRecord = { appId, buildSha: sha, missions };
+    // Surface the persisted parent lineage (SPEC §11.1) — written by saveRun but
+    // previously never read back, so a restored run lost its diff parent pointer.
+    if (hdr.parent_sha) out.parentSha = hdr.parent_sha;
+    return out;
   }
 
   getCachedActions(appId: string, buildSha: string, missionId: string): Action[] | null {

@@ -201,6 +201,15 @@ function main(): void {
   const latest = sqlOut.latestRun as RunRecord;
   truthy("latest run is SHA2", latest.buildSha === SHA2);
   truthy("latest run has 3 missions", latest.missions.length === 3);
+  // parentSha lineage (SPEC §11.1) round-trips through BOTH backends — saveRun wrote
+  // it; getRun must read it back (explicit, since the cross-backend eq above would
+  // pass even if both backends dropped it identically).
+  truthy("parentSha round-trips: SHA2 run -> parent SHA1 (sqlite)", latest.parentSha === SHA1);
+  truthy(
+    "parentSha round-trips: SHA2 run -> parent SHA1 (in-memory)",
+    (memOut.runAtSha2 as RunRecord).parentSha === SHA1,
+  );
+  truthy("cold first run has no parent (SHA1)", (sqlOut.runAtSha1 as RunRecord).parentSha === undefined);
   truthy(
     "missions sorted fail/ambiguous/pass",
     latest.missions.map((m) => m.verdict.status).join(",") === "ambiguous,pass,pass" ||

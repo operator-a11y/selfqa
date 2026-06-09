@@ -106,7 +106,10 @@ async function runWalk(appId: string, built: BuiltApp): Promise<{ run?: RunRecor
     const prior = runs.get(appId) ?? store.getRun(appId) ?? undefined;
     const carryForward = prior?.missions.map((m) => ({
       mission: m.mission,
-      actions: m.trace.actions ?? [],
+      // Reuse the compiled actions ONLY for a REACHED mission (stable, no recompile).
+      // An UNREACHED mission carries no usable sequence -> pass undefined so the run
+      // orchestrator recompiles it a fresh shot instead of replaying a known dud.
+      actions: m.trace.reached ? m.trace.actions : undefined,
     }));
     const frozenRegressionTests = store
       .listRegressionTests(appId, { status: "active" })
@@ -130,8 +133,12 @@ async function runWalk(appId: string, built: BuiltApp): Promise<{ run?: RunRecor
       snapshotRestoreKind,
       parallelDbVerdictsTrusted: store.getParallelDbVerdictsTrusted(),
     });
+    // Run-to-run lineage (SPEC §11.1): the prior build is this run's parent when it's
+    // genuinely a new generation, so the run-diff can later pair them by stable id.
+    const parentSha = prior && prior.buildSha !== buildSha ? prior.buildSha : undefined;
+    if (parentSha) run.parentSha = parentSha;
     runs.set(appId, run);
-    store.saveRun(run);
+    store.saveRun(run, parentSha);
     walkState.delete(appId);
     console.log(`[worker] walk ${appId}: ${run.missions.length} missions`);
     return { run };

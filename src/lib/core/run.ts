@@ -7,7 +7,7 @@
 import type { Browser } from "playwright";
 import type { LLMProvider } from "./provider/types";
 import type { GeneratedApp } from "./codegen/build-agent";
-import type { Mission, MissionRun, RunRecord, VerdictStatus } from "./domain/types";
+import type { Action, Mission, MissionRun, RunRecord, VerdictStatus } from "./domain/types";
 import type { IsolationProvider } from "./walk/isolation";
 import { deriveMissions } from "./codegen/mission-deriver";
 import { compileSequence } from "./codegen/mission-compiler";
@@ -72,18 +72,26 @@ export function missionRunFromWalked(
  * coverage for just-added features instead of regenerating the suite from scratch
  * (a cold re-derive would also scramble the stable ids the run-diff matches on).
  */
+/** A mission carried forward from the prior run. `actions` present => reuse it
+ *  verbatim (a REACHED mission — stable, no recompile, no provider drift). `actions`
+ *  ABSENT => recompile fresh (a prior UNREACHED mission carries no usable sequence;
+ *  give it a new shot against the current code, never replay a known-failing dud). */
+export interface CarriedMission {
+  mission: Mission;
+  actions?: Action[];
+}
+
 export async function assembleRunPlans(
   provider: LLMProvider,
   args: {
     app: GeneratedApp;
-    /** prior run's missions to keep verbatim (mission + its compiled actions). */
-    carryForward?: MissionPlan[];
+    carryForward?: CarriedMission[];
     /** active frozen regression tests, so the deriver never re-proposes a frozen id. */
     frozenRegressionTests?: Mission[];
   },
 ): Promise<MissionPlan[]> {
   const carry = args.carryForward ?? [];
-  const existingMissions = carry.map((p) => p.mission);
+  const existingMissions = carry.map((c) => c.mission);
 
   const { missions: derived } = await deriveMissions(provider, {
     appPrompt: args.app.prompt,
@@ -94,9 +102,27 @@ export async function assembleRunPlans(
       : undefined,
   });
 
-  // Compile ONLY the net-new missions; carried ones reuse their stored actions.
-  // Dedup by id (a carried id always wins) — belt-and-suspenders; the deriver
-  // already throws if an informed run re-proposes a kept id (SPEC §7.5).
+  // Carried missions reuse their compiled actions when present; recompile (loudly)
+  // when absent so a prior unreached/degenerate mission gets a real sequence instead
+  // of a silent navigate-only walk. `[]` is a VALID reused sequence (a reached
+  // navigate-only mission), so only `undefined` triggers a recompile.
+  let recompiled = 0;
+  const carriedPlans: MissionPlan[] = [];
+  for (const c of carry) {
+    let actions = c.actions;
+    if (actions === undefined) {
+      actions = await compileSequence(provider, c.mission, args.app.files);
+      recompiled++;
+    }
+    carriedPlans.push({ mission: c.mission, actions });
+  }
+  if (recompiled) {
+    console.log(`[run] recompiled ${recompiled} carried mission(s) with no reusable actions`);
+  }
+
+  // Compile ONLY the net-new missions and append. Dedup by id (a carried id always
+  // wins) — now a LIVE guard: the deriver drops re-proposed ids tolerantly (SPEC §7.5),
+  // so this still protects against any slipping through.
   const carriedIds = new Set(existingMissions.map((m) => m.id));
   const netNewPlans: MissionPlan[] = [];
   for (const m of derived) {
@@ -106,7 +132,7 @@ export async function assembleRunPlans(
       actions: await compileSequence(provider, m, args.app.files),
     });
   }
-  return [...carry, ...netNewPlans];
+  return [...carriedPlans, ...netNewPlans];
 }
 
 export async function runMissions(args: {
@@ -122,11 +148,11 @@ export async function runMissions(args: {
   /** re-walk scope (SPEC §8.3); absent = walk all (M4 behavior unchanged) */
   missionIds?: string[];
   /**
-   * INFORMED re-run (SPEC §7.5): prior-run missions carried forward verbatim, so the
-   * deriver proposes NET-NEW missions only and this run ACCRETES them onto the kept
-   * set. Absent/empty => a COLD run that derives the whole suite (M4 behavior).
+   * INFORMED re-run (SPEC §7.5): prior-run missions carried forward, so the deriver
+   * proposes NET-NEW missions only and this run ACCRETES them onto the kept set.
+   * Absent/empty => a COLD run that derives the whole suite (M4 behavior).
    */
-  carryForward?: MissionPlan[];
+  carryForward?: CarriedMission[];
   /** active frozen regression tests handed to the deriver (never re-proposed). */
   frozenRegressionTests?: Mission[];
   /** SPEC §9.3: db-file-copy + untrusted -> forced to concurrency 1 (M5-F-INT) */

@@ -77,19 +77,25 @@ export async function deriveMissions(
         `mission-deriver: cold run produced ${missions.length} missions (expected ${MIN_MISSIONS}-${MAX_MISSIONS})`,
       );
     }
-  } else {
-    const existing = new Set(
-      [...(args.existingMissions ?? []), ...(args.frozenRegressionTests ?? [])].map(
-        (m) => m.id,
-      ),
-    );
-    const collide = ids.filter((id) => existing.has(id));
-    if (collide.length) {
-      throw new Error(
-        `mission-deriver: informed run re-proposed existing ids (${collide.join(", ")}); must be net-new only (SPEC §7.5)`,
-      );
-    }
+    return { missions, reusedIds: parsed.reusedIds };
   }
 
-  return { missions, reusedIds: parsed.reusedIds };
+  // INFORMED: the deriver is asked for NET-NEW missions only. A messy real model
+  // sometimes re-proposes an EXISTING id anyway — be TOLERANT (cf. coerceAssertion,
+  // parseEditedFiles): DROP the re-proposed mission with a loud warn rather than
+  // crash the whole re-run; the kept mission already covers it (SPEC §7.5, §13.2).
+  const existing = new Set(
+    [...(args.existingMissions ?? []), ...(args.frozenRegressionTests ?? [])].map(
+      (m) => m.id,
+    ),
+  );
+  const collide = ids.filter((id) => existing.has(id));
+  if (collide.length) {
+    console.warn(
+      `[mission-deriver] informed run re-proposed ${collide.length} existing id(s) ` +
+        `(${collide.join(", ")}); dropping — net-new only (SPEC §7.5)`,
+    );
+  }
+  const netNew = missions.filter((m) => !existing.has(m.id));
+  return { missions: netNew, reusedIds: parsed.reusedIds };
 }
