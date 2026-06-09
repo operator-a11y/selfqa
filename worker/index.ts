@@ -21,6 +21,7 @@ import http from "node:http";
 import { promises as fs } from "node:fs";
 import { getProvider } from "../src/lib/core/provider/factory";
 import { buildApp, type GeneratedApp } from "../src/lib/core/codegen/build-agent";
+import { normalizeGeneratedApp } from "../src/lib/core/codegen/normalize";
 import { instrument } from "../src/lib/core/instrument/inject";
 import { assembleTuple } from "../src/lib/core/codegen/tuple";
 import { editFromTuples } from "../src/lib/core/codegen/edit-agent";
@@ -168,7 +169,9 @@ const server = http.createServer(async (req, res) => {
       if (!prompt) return sendJson(res, 400, { error: "prompt is required" });
       const appId = newId("app");
       console.log(`[worker] build ${appId}: ${prompt}`);
-      const generated = instrument(await buildApp(provider, prompt));
+      // normalize the scaffold to a known-good baseline (model owns the app, SelfQA
+      // owns package.json/config) so a model's version/config slip can't fail the build.
+      const generated = instrument(normalizeGeneratedApp(await buildApp(provider, prompt)));
       const repo = await writeGeneratedApp(appId, generated.files);
       const running = await startApp(repo.dir, { id: appId });
       const sha = await currentSha(repo.dir);
