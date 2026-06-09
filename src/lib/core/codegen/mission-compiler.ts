@@ -17,17 +17,24 @@ import {
 } from "./prompts";
 
 const StrategyEnum = z.enum(["data-testid", "role+name", "text", "xpath"]);
+// A real model freely emits a number/boolean where a string is meant (e.g. a
+// "type" action with value: 5, or a selector value 12). Coerce to string rather
+// than crash the whole compiled sequence on one type slip.
+const looseString = z.preprocess(
+  (v) => (typeof v === "number" || typeof v === "boolean" ? String(v) : v),
+  z.string(),
+);
 const SelectorRefSchema = z.object({
   strategy: StrategyEnum,
-  value: z.string(),
+  value: looseString,
   fallbacks: z
-    .array(z.object({ strategy: StrategyEnum, value: z.string() }))
+    .array(z.object({ strategy: StrategyEnum, value: looseString }))
     .optional(),
 });
 const ActionSchema = z.object({
   kind: z.enum(["navigate", "click", "type", "press", "select", "wait"]),
   target: SelectorRefSchema.optional(),
-  value: z.string().optional(),
+  value: looseString.optional(),
 });
 const CompiledSchema = z.object({ actions: z.array(ActionSchema) });
 
