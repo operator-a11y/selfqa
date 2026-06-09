@@ -18,7 +18,12 @@ export interface GeneratedFile {
   content: string;
 }
 
-const FILE_BLOCK = /<selfqa:file path="([^"]+)">\n([\s\S]*?)\n<\/selfqa:file>/g;
+// Tolerant of a real model's formatting: single OR double quotes around the path,
+// whitespace inside the tags, and an optional (single) newline after `>` / before
+// `</…>` (single newline only, so a file whose first line is indented keeps it).
+const FILE_BLOCK = /<selfqa:file\s+path=["']([^"']+)["']\s*>\n?([\s\S]*?)\n?<\/selfqa:file\s*>/g;
+// A block the model emitted WITHOUT a path attribute (qwen et al. do this on edits).
+const PATHLESS_BLOCK = /<selfqa:file\s*>\n?([\s\S]*?)\n?<\/selfqa:file\s*>/g;
 
 /** True if `p` is a safe repo-relative path (no absolute, no traversal). */
 export function isSafeRelativePath(p: string): boolean {
@@ -42,6 +47,22 @@ export function parseFileBlocks(text: string): GeneratedFile[] {
     files.push({ path, content });
   }
   return files;
+}
+
+/**
+ * Parse an EDIT's file blocks, with a fallback for the common real-model slip of
+ * omitting the path attribute. If the model emitted exactly one PATHLESS block and
+ * exactly one file was in scope, that single block IS that file (a localized edit
+ * usually touches one file). Anything more ambiguous returns what was path-tagged.
+ */
+export function parseEditedFiles(text: string, candidatePaths: string[]): GeneratedFile[] {
+  const tagged = parseFileBlocks(text);
+  if (tagged.length > 0) return tagged;
+  const pathless = [...text.matchAll(PATHLESS_BLOCK)].map((m) => m[1]);
+  if (pathless.length === 1 && candidatePaths.length === 1) {
+    return [{ path: candidatePaths[0], content: pathless[0] }];
+  }
+  return [];
 }
 
 /** Serialize files into the block format (used by StubProvider and tests). */

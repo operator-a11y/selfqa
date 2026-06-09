@@ -6,6 +6,7 @@
  * regression. This can. Run: `npx tsx scripts/verify-schema.ts`.
  */
 import { AssertionSchema, MissionSchema, coerceAssertion } from "../src/lib/core/codegen/schema";
+import { parseFileBlocks, parseEditedFiles } from "../src/lib/core/codegen/protocol";
 import type { ZodTypeAny } from "zod";
 
 let failures = 0;
@@ -112,6 +113,22 @@ eq("coerce: semantic passes through", coerceAssertion({ type: "semantic", nl: "l
 check("coerce: garbage -> safe semantic (no throw)", () => {
   const c = coerceAssertion({ wat: 1 });
   if (c.type !== "semantic" || !c.nl) throw new Error("expected a semantic fallback with nl");
+});
+
+// protocol — tolerant of real-model file-block formatting.
+check("protocol: single-quoted path parses", () => {
+  if (parseFileBlocks("<selfqa:file path='a.ts'>\nx\n</selfqa:file>").length !== 1) throw new Error("single-quote path failed");
+});
+check("protocol: indented first line is preserved", () => {
+  const c = parseFileBlocks('<selfqa:file path="a.css">\n  .x {}\n</selfqa:file>')[0].content;
+  if (c !== "  .x {}") throw new Error("leading whitespace lost: " + JSON.stringify(c));
+});
+check("protocol: pathless edit block infers the single candidate file", () => {
+  const r = parseEditedFiles("<selfqa:file>\nCONTENT\n</selfqa:file>", ["src/app/page.tsx"]);
+  if (r.length !== 1 || r[0].path !== "src/app/page.tsx" || r[0].content !== "CONTENT") throw new Error("bad inference: " + JSON.stringify(r));
+});
+check("protocol: a pathless block is NOT guessed among multiple candidates", () => {
+  if (parseEditedFiles("<selfqa:file>\nx\n</selfqa:file>", ["a.ts", "b.ts"]).length !== 0) throw new Error("guessed among multiple");
 });
 
 if (failures) {

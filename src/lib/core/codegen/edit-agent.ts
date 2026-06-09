@@ -10,7 +10,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { LLMProvider } from "../provider/types";
-import { parseFileBlocks, isSafeRelativePath } from "./protocol";
+import { parseFileBlocks, parseEditedFiles, isSafeRelativePath } from "./protocol";
 import { EDIT_SYSTEM_PROMPT, editUserPrompt, editFromTuplesUserPrompt } from "./prompts";
 import { listTrackedFiles, readFiles, commitAll } from "../workspace/repo";
 import type { GroundedFeedback } from "../domain/types";
@@ -110,7 +110,7 @@ export async function editFromTuples(
     temperature: 0,
   });
 
-  const changed = parseFileBlocks(res.text);
+  const changed = parseEditedFiles(res.text, currentFiles.map((f) => f.path));
   if (changed.length === 0) {
     throw new Error("editFromTuples: provider returned no <selfqa:file> blocks");
   }
