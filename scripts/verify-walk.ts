@@ -29,6 +29,7 @@ import { getBrowser, closeBrowser } from "../src/lib/core/harness/browser";
 import { ClientContextIsolation } from "../src/lib/core/walk/isolation";
 import { walkMission, walkAll, type MissionPlan } from "../src/lib/core/walk/walker";
 import { checkAssertion } from "../src/lib/core/verify/checker";
+import { resolveTuplePrefix } from "../src/lib/core/walk/comment-anchor";
 import type { Action } from "../src/lib/core/domain/types";
 
 let failures = 0;
@@ -106,6 +107,17 @@ async function main(): Promise<void> {
   truthy(
     "unreached state -> checkAssertion null (could-not-evaluate, NOT false-absent)",
     nullCheck.satisfied === null && nullCheck.detail.includes("could-not-evaluate"),
+  );
+  // A FAILED walk must retain its PARTIAL trace (navigate + failure-point snapshot)
+  // so the mission stays commentable — NOT an empty trace -> needs-human (§7.3).
+  truthy(
+    "failed walk retains a partial trace (steps > 0, not discarded)",
+    ghost.trace.steps.length > 0,
+  );
+  const ghostResolve = await resolveTuplePrefix(ghost.trace);
+  truthy(
+    "failed mission is commentable (resolves to a step, NOT empty-trace)",
+    "actionSequencePrefix" in ghostResolve,
   );
 
   // diffFiles primitive (M5 manifest foundation)

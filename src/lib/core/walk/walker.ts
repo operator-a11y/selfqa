@@ -8,7 +8,7 @@
  * HOT-PATH file (SPEC §6.3): Playwright + harness/walk only, NEVER a provider import.
  */
 import path from "node:path";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import type { Action, Mission, MissionTrace, StepCapture } from "../domain/types";
 import type { ObservedState } from "../verify/checker";
 import type { IsolationProvider } from "./isolation";
@@ -65,9 +65,13 @@ export async function walkMission(
     const ctx = await browser.newContext({ recordVideo: { dir: videoDir } });
     const consoleErrors: string[] = [];
     let httpStatus: number | undefined;
+    // Declared outside the try so a FAILED walk can still surface the partial
+    // trace (the steps reached before the break) for human commenting (SPEC §7.3).
+    const steps: StepCapture[] = [];
+    let page: Page | undefined;
     try {
       await iso.before(ctx, slot);
-      const page = await ctx.newPage();
+      page = await ctx.newPage();
       page.on("console", (m) => {
         if (m.type() === "error") consoleErrors.push(m.text());
       });
@@ -76,7 +80,6 @@ export async function walkMission(
       httpStatus = resp?.status();
       await waitForSettled(page);
 
-      const steps: StepCapture[] = [];
       const cap0 = await captureStep(page, runId, mission.id, 0);
       steps.push({
         index: 0,
@@ -125,19 +128,40 @@ export async function walkMission(
       return { trace, observed };
     } catch (err) {
       if (process.env.SELFQA_WALK_DEBUG) console.error(`[walk fail] ${mission.id} attempt ${attempt}:`, err instanceof Error ? err.message : err);
-      const vid = ctx.pages()[0]?.video();
+      // Best-effort failure-point snapshot: append a step for WHERE it broke so the
+      // human has a concrete locus to comment on (the last reached step before the
+      // failing action). `actions[steps.length - 1]` is the action being attempted
+      // when it threw (steps holds navigate + every action that DID complete).
+      const failedAction = actions[steps.length - 1];
+      if (page) {
+        try {
+          const capF = await captureStep(page, runId, mission.id, steps.length);
+          steps.push({
+            index: steps.length,
+            actionKind: failedAction?.kind ?? "navigate",
+            action: failedAction ?? { kind: "navigate", value: baseUrl },
+            url: capF.url,
+            screenshot: capF.screenshot,
+            dom: capF.dom,
+          });
+        } catch {
+          /* page too broken to snapshot — keep whatever steps we already have */
+        }
+      }
+      const vid = page?.video();
       await ctx.close().catch(() => {});
       const video = vid ? await vid.path().catch(() => undefined) : undefined;
-      // Retain the failing attempt's trace (the replay-failed evidence, §7.3).
+      // Retain the failing attempt's PARTIAL trace (the replay-failed evidence,
+      // §7.3) — not an empty trace, so a failed mission stays commentable.
       last = {
         missionId: mission.id,
         reached: false,
         attempts: attempt,
         entryRoute,
         actions,
-        steps: [],
+        steps: [...steps],
         video,
-        terminalUrl: baseUrl,
+        terminalUrl: steps.length ? steps[steps.length - 1].url : baseUrl,
         httpStatus,
         consoleErrors,
       };
